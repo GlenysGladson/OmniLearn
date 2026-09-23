@@ -1,0 +1,43 @@
+theory_name: "Probability Theory"
+
+concepts:
+  - id: "ProbabilitySpace"
+    category: "DATATYPE"
+    assessable: false
+  - id: "InclusionExclusion"
+    category: "PROBABILITY"
+    assessable: true
+
+dependencies:
+  - prereq: "ProbabilitySpace"
+    dependent: "InclusionExclusion"
+
+templates:
+  - id: "prob_inc_exc_01"
+    targets: ["InclusionExclusion"]
+    question_text: "Given P(A) = {pA}%, P(B) = {pB}%, and P(A union B) = {pUnion}%, compute P(A intersect B) in percent."
+    variables:
+      - name: "pA"
+        sort: "Int"
+      - name: "pB"
+        sort: "Int"
+      - name: "pInter"
+        sort: "Int"
+      - name: "pUnion"
+        sort: "Int"
+    constraints:
+      - "(>= pA 20)"
+      - "(<= pA 50)"
+      - "(>= pB 20)"
+      - "(<= pB 50)"
+      - "(>= pInter 5)"
+      - "(<= pInter 15)"
+      - "(>= pUnion 30)"
+      - "(<= pUnion 85)"
+      - "(= pUnion (- (+ pA pB) pInter))"
+    correct_answer_expr: "pInter"
+    answer_type: "Int"
+    misconceptions:
+      - name: "AssumedIndependence"
+        expr: "(div (* pA pB) 100)"
+        description: "Treated A and B as independent (multiplied the percentages) instead of using inclusion-exclusion"
