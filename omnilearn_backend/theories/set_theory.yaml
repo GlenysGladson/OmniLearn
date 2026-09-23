@@ -1,0 +1,87 @@
+theory_name: "Set Theory"
+
+concepts:
+  - id: "Set"
+    category: "DATATYPE"
+    assessable: false
+  - id: "Element"
+    category: "DATATYPE"
+    assessable: false
+  - id: "Union"
+    category: "OPERATION"
+    assessable: true
+  - id: "Intersection"
+    category: "OPERATION"
+    assessable: true
+  - id: "Difference"
+    category: "OPERATION"
+    assessable: true
+
+dependencies:
+  - prereq: "Set"
+    dependent: "Union"
+  - prereq: "Set"
+    dependent: "Intersection"
+  - prereq: "Union"
+    dependent: "Difference"
+
+templates:
+  - id: "set_union_01"
+    targets: ["Union"]
+    question_text: "Find the union of sets A and B."
+    variables:
+      - name: "A"
+        sort: "BitVec"
+        width: 6
+      - name: "B"
+        sort: "BitVec"
+        width: 6
+    constraints:
+      - "(distinct A B)"
+    correct_answer_expr: "(bvor A B)"
+    answer_type: "Set"
+    misconceptions:
+      - name: "IntersectionConfusion"
+        expr: "(bvand A B)"
+        description: "Confused Union with Intersection"
+
+  - id: "set_intersection_01"
+    targets: ["Intersection"]
+    question_text: "Find the intersection of sets A and B."
+    variables:
+      - name: "A"
+        sort: "BitVec"
+        width: 6
+      - name: "B"
+        sort: "BitVec"
+        width: 6
+    constraints:
+      - "(distinct A B)"
+    correct_answer_expr: "(bvand A B)"
+    answer_type: "Set"
+    misconceptions:
+      - name: "UnionConfusion"
+        expr: "(bvor A B)"
+        description: "Confused Intersection with Union"
+
+  - id: "set_difference_01"
+    targets: ["Difference"]
+    question_text: "Find the difference of sets A and B (A minus B)."
+    variables:
+      - name: "A"
+        sort: "BitVec"
+        width: 6
+      - name: "B"
+        sort: "BitVec"
+        width: 6
+    constraints:
+      - "(distinct A B)"
+    correct_answer_expr: "(bvand A (bvnot B))"
+    answer_type: "Set"
+    misconceptions:
+      - name: "IntersectionInsteadOfDifference"
+        expr: "(bvand A B)"
+        description: "Confused Difference with Intersection"
+      - name: "UnionInsteadOfDifference"
+        expr: "(bvor A B)"
+        description: "Confused Difference with Union"
