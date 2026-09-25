@@ -7,10 +7,15 @@ concepts:
   - id: "InclusionExclusion"
     category: "PROBABILITY"
     assessable: true
+  - id: "ConditionalProbability"
+    category: "PROBABILITY"
+    assessable: true
 
 dependencies:
   - prereq: "ProbabilitySpace"
     dependent: "InclusionExclusion"
+  - prereq: "ProbabilitySpace"
+    dependent: "ConditionalProbability"
 
 templates:
   - id: "prob_inc_exc_01"
@@ -41,3 +46,51 @@ templates:
       - name: "AssumedIndependence"
         expr: "(div (* pA pB) 100)"
         description: "Treated A and B as independent (multiplied the percentages) instead of using inclusion-exclusion"
+
+  - id: "prob_cond_01"
+    targets: ["ConditionalProbability"]
+    question_text: "Given P(A intersect B) = {pInter}%, and P(B) = {pB}%, compute P(A|B) in percent."
+    variables:
+      - name: "pInter"
+        sort: "Int"
+      - name: "pB"
+        sort: "Int"
+      - name: "pCond"
+        sort: "Int"
+    constraints:
+      - "(>= pB 10)"
+      - "(<= pB 80)"
+      - "(>= pInter 5)"
+      - "(<= pInter pB)"
+      - "(= 0 (mod (* pInter 100) pB))"
+      - "(= pCond (div (* pInter 100) pB))"
+    correct_answer_expr: "pCond"
+    answer_type: "Int"
+    misconceptions:
+      - name: "DividedByIntersection"
+        expr: "(div (* pB 100) pInter)"
+        description: "Divided P(B) by P(A intersect B) instead of the other way around."
+
+  - id: "prob_cond_02"
+    targets: ["ConditionalProbability"]
+    question_text: "Given P(A intersect B) = {pInter}%, and P(A) = {pA}%, compute P(B|A) in percent."
+    variables:
+      - name: "pInter"
+        sort: "Int"
+      - name: "pA"
+        sort: "Int"
+      - name: "pCond"
+        sort: "Int"
+    constraints:
+      - "(>= pA 10)"
+      - "(<= pA 80)"
+      - "(>= pInter 5)"
+      - "(<= pInter pA)"
+      - "(= 0 (mod (* pInter 100) pA))"
+      - "(= pCond (div (* pInter 100) pA))"
+    correct_answer_expr: "pCond"
+    answer_type: "Int"
+    misconceptions:
+      - name: "DividedByIntersection"
+        expr: "(div (* pA 100) pInter)"
+        description: "Divided P(A) by P(A intersect B) instead of the other way around."
