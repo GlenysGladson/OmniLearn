@@ -259,7 +259,7 @@ GeneratedQuestion GenericExprEngine::generateInstance(const DynamicTemplate& tmp
                 rendered.replace(pos, placeholder.length(), valueStr);
                 pos = rendered.find(placeholder);
             }
-            if (!mentioned) unmentioned.push_back(v.name + " = " + valueStr);
+            if (!mentioned && v.name != tmpl.correctAnswerExpr) unmentioned.push_back(v.name + " = " + valueStr);
         }
         if (!unmentioned.empty()) {
             rendered += "\nGiven: ";

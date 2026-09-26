@@ -1,5 +1,7 @@
 #include "TemplateEngine.hpp"
 #include <algorithm>
+#include <cstdlib>
+#include <vector>
 
 std::string TemplateEngine::makeSignature(const GeneratedQuestion& q) const {
     // Plain rendered text -- this is exactly what's passed to
@@ -23,14 +25,30 @@ GeneratedQuestion TemplateEngine::selectAndInitializeTemplate(const LearnerModel
                std::find(uncov.begin(), uncov.end(), name) != uncov.end();
     };
 
-    const DynamicTemplate* chosen = nullptr;
+    std::vector<const DynamicTemplate*> validTemplates;
+    std::string activeTarget;
+    
     for (const auto& tmpl : theory.templates) {
         for (const auto& target : tmpl.targetConcepts) {
-            if (needsConcept(target)) { chosen = &tmpl; break; }
+            if (needsConcept(target)) { 
+                if (activeTarget.empty()) {
+                    activeTarget = target;
+                }
+                if (target == activeTarget) {
+                    validTemplates.push_back(&tmpl); 
+                }
+                break; 
+            }
         }
-        if (chosen) break;
     }
-    if (!chosen && !theory.templates.empty()) chosen = &theory.templates[0];
+
+    const DynamicTemplate* chosen = nullptr;
+    if (!validTemplates.empty()) {
+        chosen = validTemplates[rand() % validTemplates.size()];
+    } else if (!theory.templates.empty()) {
+        chosen = &theory.templates[0];
+    }
+    
     if (!chosen) throw TemplateError("No templates available in the current Formal Theory.");
 
     // Diversity (avoiding a repeat of a question already asked this

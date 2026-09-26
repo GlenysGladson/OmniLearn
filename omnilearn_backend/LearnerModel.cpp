@@ -1,6 +1,7 @@
 #include "LearnerModel.hpp"
 #include <iostream>
 #include <algorithm>
+#include <cmath>
 
 void LearnerModel::initialize(const FormalTheory& theory) {
     for (const auto& pair : theory.concepts) {
@@ -18,6 +19,8 @@ void LearnerModel::update(const std::vector<std::string>& assessedConcepts, bool
         } else {
             mastery[c] = std::max(0.0, mastery[c] - (alpha / 2.0));
         }
+        // Round to 2 decimal places to prevent floating-point drift
+        mastery[c] = std::round(mastery[c] * 100.0) / 100.0;
     }
 
     if (!detectedError.empty()) {
@@ -62,6 +65,7 @@ bool LearnerModel::isCertified(const FormalTheory& theory) const {
 void LearnerModel::printReport(const FormalTheory& theory) const {
     std::cout << "\n================ LEARNER MODEL STATE ================\n";
     for (const auto& pair : theory.concepts) {
+        if (!pair.second.assessable) continue;
         const std::string& c = pair.first;
         std::cout << c << " -> Mastery: " << mastery.at(c) 
                   << " | Coverage: " << coverage.at(c) << "\n";
