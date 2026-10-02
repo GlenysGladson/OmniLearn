@@ -34,11 +34,7 @@ templates:
     variables:
       - name: "a"
         sort: "Int"
-
       - name: "b"
-        sort: "Int"
-
-      - name: "answer"
         sort: "Int"
 
     constraints:
@@ -46,9 +42,8 @@ templates:
       - "(<= a 10)"
       - "(>= b 2)"
       - "(<= b 10)"
-      - "(= answer (* a b))"
 
-    correct_answer_expr: "answer"
+    correct_answer_expr: "(* a b)"
     answer_type: "Int"
 
     misconceptions:
@@ -71,8 +66,6 @@ templates:
         sort: "Int"
       - name: "r"
         sort: "Int"
-      - name: "answer"
-        sort: "Int"
 
     constraints:
       - "(>= n 5)"
@@ -80,9 +73,8 @@ templates:
       - "(>= r 2)"
       - "(<= r 4)"
       - "(<= r n)"
-      - "(= answer (ite (= r 2) (* n (- n 1)) (ite (= r 3) (* n (* (- n 1) (- n 2))) (* n (* (- n 1) (* (- n 2) (- n 3)))))))"
 
-    correct_answer_expr: "answer"
+    correct_answer_expr: "(ite (= r 2) (* n (- n 1)) (ite (= r 3) (* n (* (- n 1) (- n 2))) (* n (* (- n 1) (* (- n 2) (- n 3))))))"
     answer_type: "Int"
 
     misconceptions:
@@ -105,8 +97,6 @@ templates:
         sort: "Int"
       - name: "r"
         sort: "Int"
-      - name: "answer"
-        sort: "Int"
 
     constraints:
       - "(>= n 5)"
@@ -114,9 +104,8 @@ templates:
       - "(>= r 2)"
       - "(<= r 4)"
       - "(<= r n)"
-      - "(= answer (ite (= r 2) (div (* n (- n 1)) 2) (ite (= r 3) (div (* n (* (- n 1) (- n 2))) 6) (div (* n (* (- n 1) (* (- n 2) (- n 3)))) 24))))"
 
-    correct_answer_expr: "answer"
+    correct_answer_expr: "(ite (= r 2) (div (* n (- n 1)) 2) (ite (= r 3) (div (* n (* (- n 1) (- n 2))) 6) (div (* n (* (- n 1) (* (- n 2) (- n 3)))) 24)))"
     answer_type: "Int"
 
     misconceptions:
