@@ -18,7 +18,10 @@ sudo apt-get install libz3-dev cmake g++      # if not already installed
 mkdir build && cd build
 cmake ..
 make
+.\omnilearn_tests
+.\omnilearn_validate ..\theories\
 ./omnilearn_backend
+
 ```
 
 ## What's covered
