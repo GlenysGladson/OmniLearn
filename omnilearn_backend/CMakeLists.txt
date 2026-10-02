@@ -25,16 +25,23 @@ set(SOURCES
     ${CMAKE_SOURCE_DIR}/Theory.cpp
     ${CMAKE_SOURCE_DIR}/YamlParser.cpp
     ${CMAKE_SOURCE_DIR}/GenericExprEngine.cpp
-    ${CMAKE_SOURCE_DIR}/main.cpp
+    ${CMAKE_SOURCE_DIR}/TemplateValidator.cpp
 )
 
-add_executable(omnilearn_backend ${SOURCES})
-
+add_executable(omnilearn_backend ${SOURCES} ${CMAKE_SOURCE_DIR}/main.cpp)
 target_link_libraries(omnilearn_backend PRIVATE ${Z3_LIBRARIES} yaml-cpp pthread)
+
+add_executable(omnilearn_validate ${SOURCES} ${CMAKE_SOURCE_DIR}/validate_main.cpp)
+target_link_libraries(omnilearn_validate PRIVATE ${Z3_LIBRARIES} yaml-cpp pthread)
+
+add_executable(omnilearn_tests ${SOURCES} ${CMAKE_SOURCE_DIR}/tests/test_validator.cpp)
+target_link_libraries(omnilearn_tests PRIVATE ${Z3_LIBRARIES} yaml-cpp pthread)
 
 # main.cpp uses std::filesystem (directory scanning for theory YAML
 # files). GCC < 9 ships this in a separate library that must be linked
 # explicitly; GCC >= 9 and Clang with a recent libc++ do not need it.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.0)
     target_link_libraries(omnilearn_backend PRIVATE stdc++fs)
+    target_link_libraries(omnilearn_validate PRIVATE stdc++fs)
+    target_link_libraries(omnilearn_tests PRIVATE stdc++fs)
 endif()
