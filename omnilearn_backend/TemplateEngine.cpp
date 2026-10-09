@@ -1,4 +1,5 @@
 #include "TemplateEngine.hpp"
+#include "InstanceValidator.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <vector>
@@ -57,7 +58,19 @@ GeneratedQuestion TemplateEngine::selectAndInitializeTemplate(const LearnerModel
     // this session hasn't seen yet, rather than relying on re-randomizing
     // and hoping for the best (Z3 is deterministic for lightly-constrained
     // problems, so hoping doesn't work -- verified during development).
-    GeneratedQuestion q = GenericExprEngine::generateInstance(*chosen, usedSignatures);
+    const int kMaxValidationRetries = 10;
+    GeneratedQuestion q;
+    
+    for (int attempt = 0; attempt < kMaxValidationRetries; ++attempt) {
+        q = GenericExprEngine::generateInstance(*chosen, usedSignatures);
+        InstanceValidationResult ivr = InstanceValidator::validateInstance(q);
+        if (ivr.isValid) break;
+        
+        // If not valid (e.g. misconception collision), block this specific 
+        // generation so the engine finds a different numerical assignment
+        usedSignatures.insert(makeSignature(q));
+    }
+
     registerIfUnique(q); // record even if it turned out to still be a repeat
     return q;
 }

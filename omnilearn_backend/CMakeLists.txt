@@ -26,6 +26,7 @@ set(SOURCES
     ${CMAKE_SOURCE_DIR}/YamlParser.cpp
     ${CMAKE_SOURCE_DIR}/GenericExprEngine.cpp
     ${CMAKE_SOURCE_DIR}/TemplateValidator.cpp
+    ${CMAKE_SOURCE_DIR}/InstanceValidator.cpp
 )
 
 add_executable(omnilearn_backend ${SOURCES} ${CMAKE_SOURCE_DIR}/main.cpp)
