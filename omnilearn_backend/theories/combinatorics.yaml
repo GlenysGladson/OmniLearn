@@ -1,0 +1,114 @@
+theory_name: "Combinatorics"
+
+concepts:
+  - id: "CountingPrinciple"
+    category: "OPERATION"
+    assessable: true
+
+  - id: "Permutation"
+    category: "OPERATION"
+    assessable: true
+
+  - id: "Combination"
+    category: "OPERATION"
+    assessable: true
+
+dependencies:
+  - prereq: "CountingPrinciple"
+    dependent: "Permutation"
+
+  - prereq: "CountingPrinciple"
+    dependent: "Combination"
+
+templates:
+
+  # ==================================================
+  # COUNTING PRINCIPLE
+  # ==================================================
+
+  - id: "comb_counting_01"
+    targets: ["CountingPrinciple"]
+
+    question_text: "A student has {a} choices for a shirt and {b} choices for a pair of trousers. How many different outfits can be made?"
+
+    variables:
+      - name: "a"
+        sort: "Int"
+      - name: "b"
+        sort: "Int"
+
+    constraints:
+      - "(>= a 2)"
+      - "(<= a 10)"
+      - "(>= b 2)"
+      - "(<= b 10)"
+
+    correct_answer_expr: "(* a b)"
+    answer_type: "Int"
+
+    misconceptions:
+      - name: "AddedChoicesInsteadOfMultiplying"
+        expr: "(+ a b)"
+        description: "Added the number of choices instead of multiplying them."
+
+
+  # ==================================================
+  # PERMUTATION
+  # ==================================================
+
+  - id: "comb_permutation_01"
+    targets: ["Permutation"]
+
+    question_text: "In how many different ways can {r} students be selected and arranged from a group of {n} students?"
+
+    variables:
+      - name: "n"
+        sort: "Int"
+      - name: "r"
+        sort: "Int"
+
+    constraints:
+      - "(>= n 5)"
+      - "(<= n 10)"
+      - "(>= r 2)"
+      - "(<= r 4)"
+      - "(<= r n)"
+
+    correct_answer_expr: "(ite (= r 2) (* n (- n 1)) (ite (= r 3) (* n (* (- n 1) (- n 2))) (* n (* (- n 1) (* (- n 2) (- n 3))))))"
+    answer_type: "Int"
+
+    misconceptions:
+      - name: "UsedCombinationInsteadOfPermutation"
+        expr: "(ite (= r 2) (div (* n (- n 1)) 2) (ite (= r 3) (div (* n (* (- n 1) (- n 2))) 6) (div (* n (* (- n 1) (* (- n 2) (- n 3)))) 24)))"
+        description: "Used a combination calculation even though order matters."
+
+
+  # ==================================================
+  # COMBINATION
+  # ==================================================
+
+  - id: "comb_combination_01"
+    targets: ["Combination"]
+
+    question_text: "From {n} students, how many different groups of {r} students can be selected?"
+
+    variables:
+      - name: "n"
+        sort: "Int"
+      - name: "r"
+        sort: "Int"
+
+    constraints:
+      - "(>= n 5)"
+      - "(<= n 10)"
+      - "(>= r 2)"
+      - "(<= r 4)"
+      - "(<= r n)"
+
+    correct_answer_expr: "(ite (= r 2) (div (* n (- n 1)) 2) (ite (= r 3) (div (* n (* (- n 1) (- n 2))) 6) (div (* n (* (- n 1) (* (- n 2) (- n 3)))) 24)))"
+    answer_type: "Int"
+
+    misconceptions:
+      - name: "UsedPermutationInsteadOfCombination"
+        expr: "(ite (= r 2) (* n (- n 1)) (ite (= r 3) (* n (* (- n 1) (- n 2))) (* n (* (- n 1) (* (- n 2) (- n 3))))))"
+        description: "Used a permutation calculation even though order does not matter."

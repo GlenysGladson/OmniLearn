@@ -1,273 +1,535 @@
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdlib>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
-#include <string>
-#include <vector>
+#include <map>
 #include <set>
 #include <sstream>
-#include <algorithm>
-#include <cstdlib>
-#include <cmath>
-#include <ctime>
+#include <stdexcept>
+#include <string>
+#include <vector>
+#include "GenericExprEngine.hpp"
+#include "InstanceValidator.hpp"
 #include "LearnerModel.hpp"
 #include "TemplateEngine.hpp"
+#include "TemplateValidator.hpp"
 #include "Theory.hpp"
+#include "YamlParser.hpp"
+
+namespace fs = std::filesystem;
+
+// ---------------------------------------------------------------------------
+// Loading
+// ---------------------------------------------------------------------------
 
 namespace {
-    const double kProbTolerance = 0.01; // acceptable rounding slack on a decimal answer
-    const int kMaxQuestions = 200;      // safety valve: assessment should never hang
 
-    void printDivider() {
-        std::cout << "--------------------------------------------------\n";
+// Number of generated instances used to check, at load time, that each
+// misconception really gives a different value than the correct answer.
+const int kLoadSamples = 3;
+
+} // namespace
+
+// Scans `theoriesDir` for *.yaml / *.yml files and builds one combined theory.
+//
+// For every file: parse, check concept parameters, then for every template:
+// structural/solver checks (TemplateValidator, with template IDs unique
+// across ALL files), then real instances through GenericExprEngine (which
+// also re-checks every answer in a second Z3 context). A misconception that
+// matches the correct answer (or an earlier misconception) in every sampled
+// instance is removed with a warning. Anything that fails is skipped and
+// reported, never left to crash a session.
+//
+// After all files are merged, the dependency graph is checked: a cycle is
+// fatal, an edge naming an unknown concept is a warning.
+FormalTheory loadAllTheories(const std::string& theoriesDir) {
+    if (!fs::exists(theoriesDir) || !fs::is_directory(theoriesDir)) {
+        throw std::runtime_error("Theories directory not found: " + theoriesDir);
     }
-}
 
-// Parses "1,2,3" into a sorted vector of ints.
-std::vector<int> parseUserInput(const std::string& input) {
-    std::vector<int> result;
-    std::stringstream ss(input);
-    std::string item;
-    while (std::getline(ss, item, ',')) {
+    std::vector<fs::path> yamlFiles;
+    for (const auto& entry : fs::directory_iterator(theoriesDir)) {
+        if (!entry.is_regular_file()) continue;
+        std::string ext = entry.path().extension().string();
+        if (ext == ".yaml" || ext == ".yml") yamlFiles.push_back(entry.path());
+    }
+    if (yamlFiles.empty()) {
+        throw std::runtime_error("No .yaml/.yml theory files found in: " + theoriesDir);
+    }
+    std::sort(yamlFiles.begin(), yamlFiles.end());
+
+    FormalTheory combined("CombinedTheorySet");
+    std::set<std::string> seenTemplateIds;
+
+    for (const auto& path : yamlFiles) {
+        std::cout << "Loading theory definition from: " << path.string() << "\n";
+
+        FormalTheory theory;
         try {
-            result.push_back(std::stoi(item));
-        } catch (...) {}
+            theory = YamlParser::parseTheoryFile(path.string());
+        } catch (const std::exception& ex) {
+            std::cerr << "[SKIP FILE] " << path.string() << ": " << ex.what() << "\n";
+            continue;
+        }
+
+        ValidationResult cr = TemplateValidator::validateConcepts(theory);
+        if (!cr.isValid) {
+            for (const auto& e : cr.errors) std::cerr << "[SKIP FILE] " << path.string() << ": " << e << "\n";
+            continue;
+        }
+
+        FormalTheory validated(theory.theoryName);
+        validated.concepts = theory.concepts;
+        validated.dependencyGraph = theory.dependencyGraph;
+
+        int validCount = 0, invalidCount = 0;
+        for (const auto& original : theory.templates) {
+            DynamicTemplate tmpl = original;
+
+            ValidationResult vr = TemplateValidator::validateTemplate(tmpl, theory, seenTemplateIds);
+            if (!vr.isValid) {
+                for (const auto& e : vr.errors) {
+                    std::cerr << "[VALIDATION ERROR] " << path.string() << ", template '" << tmpl.id << "': " << e << "\n";
+                }
+                ++invalidCount;
+                continue;
+            }
+
+            try {
+                // name -> (times dropped, reason)
+                std::map<std::string, std::pair<int, std::string>> dropCount;
+                for (int i = 0; i < kLoadSamples; ++i) {
+                    GeneratedQuestion q = GenericExprEngine::generateInstance(tmpl);
+                    InstanceValidationResult ivr = InstanceValidator::validateInstance(q);
+                    if (!ivr.isValid) {
+                        throw std::runtime_error("generated question is unusable: " + ivr.reasons.front());
+                    }
+                    for (const auto& d : q.droppedMisconceptions) {
+                        auto& slot = dropCount[d.name];
+                        slot.first += 1;
+                        slot.second = d.reason;
+                    }
+                }
+                std::vector<MisconceptionDef> kept;
+                for (const auto& mc : tmpl.misconceptions) {
+                    auto it = dropCount.find(mc.name);
+                    if (it != dropCount.end() && it->second.first >= kLoadSamples) {
+                        std::cerr << "[WARN] " << path.string() << ", template '" << tmpl.id
+                                  << "': misconception '" << mc.name << "' removed ("
+                                  << it->second.second << " in every sampled instance).\n";
+                    } else {
+                        kept.push_back(mc);
+                    }
+                }
+                tmpl.misconceptions = kept;
+                validated.templates.push_back(tmpl);
+                ++validCount;
+            } catch (const std::exception& ex) {
+                std::cerr << "[VALIDATION ERROR] " << path.string() << ", template '" << tmpl.id << "': " << ex.what() << "\n";
+                ++invalidCount;
+            }
+        }
+
+        std::cout << "  -> '" << theory.theoryName << "': " << theory.concepts.size()
+                  << " concept(s), " << validCount << " valid template(s)";
+        if (invalidCount > 0) std::cout << ", " << invalidCount << " rejected";
+        std::cout << "\n";
+
+        combined.merge(validated);
     }
-    std::sort(result.begin(), result.end());
-    return result;
+
+    ValidationResult dr = TemplateValidator::validateDependencies(combined);
+    for (const auto& w : dr.warnings) std::cerr << "[WARN] " << w << "\n";
+    if (!dr.isValid) {
+        std::string msg = "Invalid dependency graph:";
+        for (const auto& e : dr.errors) msg += "\n  " + e;
+        throw std::runtime_error(msg);
+    }
+
+    if (combined.templates.empty()) {
+        throw std::runtime_error("No valid templates were loaded from any theory file in: " + theoriesDir);
+    }
+
+    combined.warnOnUnreachableConcepts();
+    return combined;
 }
 
-// Parses a decimal probability answer; returns false if unparseable.
-bool parseProbabilityInput(const std::string& input, double& outValue) {
-    try {
-        size_t consumed = 0;
-        outValue = std::stod(input, &consumed);
-        return consumed > 0;
-    } catch (...) {
+// ---------------------------------------------------------------------------
+// Input handling
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct InputClosed {};  // stdin reached end of file
+struct QuitRequested {}; // student typed quit / exit
+
+std::string toLower(const std::string& s) {
+    std::string r = s;
+    std::transform(r.begin(), r.end(), r.begin(), [](unsigned char c) { return std::tolower(c); });
+    return r;
+}
+
+std::string trim(const std::string& s) {
+    size_t b = 0, e = s.size();
+    while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
+    while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
+    return s.substr(b, e - b);
+}
+
+bool readLine(std::string& out) {
+    if (!std::getline(std::cin, out)) return false;
+    if (!out.empty() && out.back() == '\r') out.pop_back(); // Windows line endings
+    return true;
+}
+
+bool parseWholeNumber(const std::string& s, long long& out) {
+    if (s.empty()) return false;
+    size_t i = 0;
+    if (s[0] == '+' || s[0] == '-') i = 1;
+    if (i >= s.size() || s.size() - i > 18) return false;
+    for (size_t k = i; k < s.size(); ++k) {
+        if (!std::isdigit(static_cast<unsigned char>(s[k]))) return false;
+    }
+    try { out = std::stoll(s); } catch (...) { return false; }
+    return true;
+}
+
+// Strict parse of a typed answer. Returns false and sets `err` on bad input,
+// so a typo is never silently turned into a (possibly correct) answer.
+bool parseAnswer(const std::string& raw, const std::string& answerType, ConcreteValue& out, std::string& err) {
+    std::string s = trim(raw);
+    out = ConcreteValue();
+    out.sort = answerType;
+
+    if (answerType == "Bool") {
+        std::string l = toLower(s);
+        if (l == "true" || l == "t" || l == "yes" || l == "y" || l == "1") { out.boolValue = true; return true; }
+        if (l == "false" || l == "f" || l == "no" || l == "n" || l == "0") { out.boolValue = false; return true; }
+        err = "Please answer true or false.";
         return false;
     }
+    if (answerType == "Real") {
+        if (s.empty()) { err = "Please enter a number."; return false; }
+        try {
+            size_t pos = 0;
+            double v = std::stod(s, &pos);
+            if (pos != s.size() || !std::isfinite(v)) { err = "Please enter a plain number such as 0.25."; return false; }
+            out.realValue = v;
+            return true;
+        } catch (...) {
+            err = "Please enter a plain number such as 0.25.";
+            return false;
+        }
+    }
+    if (answerType == "Set") {
+        std::string l = toLower(s);
+        if (l == "{}" || l == "empty" || l == "none" || l == "{ }") return true; // empty set
+        std::string cleaned;
+        for (char c : s) {
+            if (c == '{' || c == '}' || c == '[' || c == ']' || c == '(' || c == ')') continue;
+            cleaned += (c == ',') ? ' ' : c;
+        }
+        std::stringstream ss(cleaned);
+        std::string tok;
+        std::set<int> elems;
+        bool any = false;
+        while (ss >> tok) {
+            long long v = 0;
+            if (!parseWholeNumber(tok, v) || v < 1 || v > 64) {
+                err = "'" + tok + "' is not a valid element. Use whole numbers like 1,2,3 (or {} for the empty set).";
+                return false;
+            }
+            elems.insert(static_cast<int>(v));
+            any = true;
+        }
+        if (!any) { err = "Please list the elements, e.g. 1,2,3 (or {} for the empty set)."; return false; }
+        out.setValue.assign(elems.begin(), elems.end());
+        return true;
+    }
+    // "Int" and any other declared type are treated as whole numbers.
+    long long v = 0;
+    if (!parseWholeNumber(s, v)) { err = "Please enter a whole number."; return false; }
+    out.sort = "Int";
+    out.intValue = v;
+    return true;
 }
 
-namespace {
-    std::set<int> toSet(const std::vector<int>& v) {
-        return std::set<int>(v.begin(), v.end());
-    }
-    std::set<int> setUnion(const std::set<int>& x, const std::set<int>& y) {
-        std::set<int> r(x); r.insert(y.begin(), y.end()); return r;
-    }
-    std::set<int> setInter(const std::set<int>& x, const std::set<int>& y) {
-        std::set<int> r;
-        for (int e : x) if (y.count(e)) r.insert(e);
-        return r;
-    }
-    std::set<int> setDiff(const std::set<int>& x, const std::set<int>& y) {
-        std::set<int> r;
-        for (int e : x) if (!y.count(e)) r.insert(e);
-        return r;
+// Asks until the student gives a valid answer. Throws InputClosed on end of
+// input and QuitRequested on "quit"/"exit".
+ConcreteValue promptForAnswer(const std::string& answerType) {
+    for (;;) {
+        if (answerType == "Set") std::cout << "Enter answer (elements, e.g. 1,2,3 or {} for empty): ";
+        else if (answerType == "Bool") std::cout << "Enter answer (true/false): ";
+        else if (answerType == "Real") std::cout << "Enter answer (a number): ";
+        else std::cout << "Enter answer: ";
+        std::cout.flush();
+
+        std::string line;
+        if (!readLine(line)) throw InputClosed();
+        std::string l = toLower(trim(line));
+        if (l == "quit" || l == "exit") throw QuitRequested();
+
+        ConcreteValue v;
+        std::string err;
+        if (parseAnswer(line, answerType, v, err)) return v;
+        std::cout << "  Invalid input: " << err << "\n";
     }
 }
 
-// Compares the student's (wrong) answer against a handful of common
-// operation-confusion mistakes for the givens actually used in this
-// question, and returns a short label if one matches.
-std::string detectSetErrorPattern(const GeneratedQuestion& q, const std::vector<int>& studentAnswer) {
-    if (studentAnswer == q.correctAnswer) return "";
-    if (!q.setGivens.count("A") || !q.setGivens.count("B")) return "";
+// ---------------------------------------------------------------------------
+// Logging
+// ---------------------------------------------------------------------------
 
-    std::set<int> A = toSet(q.setGivens.at("A"));
-    std::set<int> B = toSet(q.setGivens.at("B"));
-    std::set<int> student = toSet(studentAnswer);
-    bool hasC = q.setGivens.count("C") > 0;
-    std::set<int> C = hasC ? toSet(q.setGivens.at("C")) : std::set<int>();
-
-    if (student == setUnion(A, B)) return "Intersection->Union";
-    if (student == setDiff(B, A))  return "Difference direction swapped (A-B vs B-A)";
-    if (hasC) {
-        if (student == setInter(A, B))          return "(A∩B)-C -> forgot to subtract C";
-        if (student == setDiff(setUnion(A,B),C)) return "Intersection->Union before Difference";
-    } else {
-        if (student == setInter(A, B)) return "Union->Intersection";
+std::string csvEscape(const std::string& s) {
+    bool needs = s.find_first_of(",\"\n\r") != std::string::npos;
+    if (!needs) return s;
+    std::string r = "\"";
+    for (char c : s) {
+        if (c == '"') r += "\"\"";
+        else if (c == '\n' || c == '\r') r += ' ';
+        else r += c;
     }
-    return ""; // no recognizable pattern
+    return r + "\"";
 }
 
-// Same idea for the probability template: compares the (wrong) numeric
-// answer against a handful of common Inclusion-Exclusion mistakes.
-std::string detectProbabilityErrorPattern(const GeneratedQuestion& q, double studentAnswer) {
-    auto close = [&](double v) { return std::fabs(studentAnswer - v) < kProbTolerance; };
-
-    // 1. Inclusion-Exclusion Diagnostics: Find P(A U B)
-    if (q.probGivens.count("P(A)") && q.probGivens.count("P(B)") && q.probGivens.count("P(A \u2229 B)")) {
-        double pA = std::stod(q.probGivens.at("P(A)"));
-        double pB = std::stod(q.probGivens.at("P(B)"));
-        double pAandB = std::stod(q.probGivens.at("P(A \u2229 B)"));
-
-        if (close(pA + pB)) return "Forgot to subtract P(A∩B) (double-counted the overlap)";
-        if (close(pA * pB)) return "Multiplied P(A)*P(B) instead of using Inclusion-Exclusion";
-        if (close(std::max(pA, pB))) return "Used max(P(A),P(B)) instead of the union formula";
-        if (close(pA + pB - 2 * pAandB)) return "Subtracted P(A∩B) twice";
-    }
-
-    // 2. Conditional Probability Diagnostics: Find P(A | B)
-    if (q.probGivens.count("P(B)") && q.probGivens.count("P(A \u2229 B)")) {
-        double pB = std::stod(q.probGivens.at("P(B)"));
-        double pAandB = std::stod(q.probGivens.at("P(A \u2229 B)"));
-
-        if (close(pAandB * pB)) return "Multiplied P(A∩B)*P(B) instead of dividing P(A∩B)/P(B)";
-        if (close(pB / pAandB)) return "Inverted fraction (computed P(B)/P(A∩B) instead of P(A∩B)/P(B))";
-        if (close(pB - pAandB)) return "Subtracted P(B)-P(A∩B) instead of dividing";
-    }
-
-    // 3. Complement Diagnostics: Find P(A')
-    if (q.probGivens.count("P(A)") && !q.probGivens.count("P(B)")) {
-        double pA = std::stod(q.probGivens.at("P(A)"));
-        if (close(pA)) return "Returned P(A) instead of 1 - P(A)";
-    }
-
-    return ""; // no recognizable pattern
+std::string joinStrings(const std::vector<std::string>& v, const std::string& sep) {
+    std::string r;
+    for (size_t i = 0; i < v.size(); ++i) r += (i ? sep : "") + v[i];
+    return r;
 }
 
-int main() {
+std::string nowString() {
+    std::time_t t = std::time(nullptr);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", std::localtime(&t));
+    return buf;
+}
+
+void appendLog(const std::string& path, int questionNo, const Selection& sel, bool correct,
+               const std::string& errorName, const std::string& studentAnswer,
+               const std::string& expected, double pBefore, double pAfter) {
+    bool writeHeader = !fs::exists(path) || fs::file_size(path) == 0;
+    std::ofstream f(path, std::ios::app);
+    if (!f) {
+        std::cerr << "[WARN] Could not write response log '" << path << "'.\n";
+        return;
+    }
+    if (writeHeader) {
+        f << "timestamp,question_no,template_id,focus_concept,target_concepts,is_recheck,difficulty,"
+             "correct,error_name,student_answer,expected_answer,p_known_before,p_known_after\n";
+    }
+    f << nowString() << ',' << questionNo << ',' << csvEscape(sel.question.templateId) << ','
+      << csvEscape(sel.focusConcept) << ',' << csvEscape(joinStrings(sel.question.targetConcepts, ";")) << ','
+      << (sel.isRecheck ? 1 : 0) << ',' << sel.question.difficulty << ',' << (correct ? 1 : 0) << ','
+      << csvEscape(errorName) << ',' << csvEscape(studentAnswer) << ',' << csvEscape(expected) << ','
+      << std::fixed << std::setprecision(4) << pBefore << ',' << pAfter << '\n';
+}
+
+// ---------------------------------------------------------------------------
+// Command line
+// ---------------------------------------------------------------------------
+
+struct Options {
+    std::string theoriesDir = "theories/";
+    std::string statePath = "learner_state.yaml";
+    std::string logPath = "responses_log.csv";
+    bool fresh = false;
+    bool verbose = false;
+    int maxQuestions = 0; // 0 = automatic
+    bool help = false;
+};
+
+void printUsage(const char* prog) {
+    std::cout << "Usage: " << prog << " [theories_dir] [options]\n"
+              << "  --state FILE         learner state file (default learner_state.yaml)\n"
+              << "  --log FILE           response log, CSV (default responses_log.csv)\n"
+              << "  --fresh              ignore and overwrite any saved state\n"
+              << "  --max-questions N    stop after N questions in this run (default: 15 per concept, at least 40)\n"
+              << "  --verbose            show why each question was chosen and P(known)\n"
+              << "  --help               show this text\n"
+              << "Type 'quit' at an answer prompt to save and exit.\n";
+}
+
+bool parseArgs(int argc, char* argv[], Options& o, std::string& err) {
+    bool haveDir = false;
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        auto needValue = [&](std::string& dst) {
+            if (i + 1 >= argc) { err = "Option " + a + " needs a value."; return false; }
+            dst = argv[++i];
+            return true;
+        };
+        if (a == "--help" || a == "-h") o.help = true;
+        else if (a == "--fresh") o.fresh = true;
+        else if (a == "--verbose") o.verbose = true;
+        else if (a == "--state") { if (!needValue(o.statePath)) return false; }
+        else if (a == "--log") { if (!needValue(o.logPath)) return false; }
+        else if (a == "--max-questions") {
+            std::string v;
+            if (!needValue(v)) return false;
+            long long n = 0;
+            if (!parseWholeNumber(v, n) || n < 1) { err = "--max-questions needs a positive whole number."; return false; }
+            o.maxQuestions = static_cast<int>(n);
+        } else if (!a.empty() && a[0] == '-') {
+            err = "Unknown option: " + a;
+            return false;
+        } else if (!haveDir) {
+            o.theoriesDir = a;
+            haveDir = true;
+        } else {
+            err = "Unexpected argument: " + a;
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+
+int main(int argc, char* argv[]) {
     srand(static_cast<unsigned int>(time(nullptr)));
 
-    std::cout << "=== OmniLearn Adaptive Assessment Started ===\n";
-    std::cout << "Covers: Set Theory + Probability (Inclusion-Exclusion)\n";
+    Options opt;
+    std::string argErr;
+    if (!parseArgs(argc, argv, opt, argErr)) {
+        std::cerr << argErr << "\n";
+        printUsage(argv[0]);
+        return 1;
+    }
+    if (opt.help) {
+        printUsage(argv[0]);
+        return 0;
+    }
 
-    FormalTheory theory = FormalTheory::createFullTheory();
+    FormalTheory theory;
+    try {
+        theory = loadAllTheories(opt.theoriesDir);
+    } catch (const std::exception& ex) {
+        std::cerr << "Fatal: " << ex.what() << "\n";
+        return 1;
+    }
+
+    int assessableCount = 0;
+    for (const auto& kv : theory.concepts) if (kv.second.assessable) ++assessableCount;
+
+    std::cout << "\nLoaded " << theory.sourceTheories.size() << " theory file(s), "
+              << theory.concepts.size() << " total concept(s) (" << assessableCount << " assessable), "
+              << theory.templates.size() << " total valid template(s).\n";
+
+    int maxQuestions = opt.maxQuestions > 0 ? opt.maxQuestions : std::max(40, 15 * assessableCount);
+
     LearnerModel learner;
     learner.initialize(theory);
+    if (!opt.fresh && learner.loadState(opt.statePath, theory)) {
+        std::cout << "Resumed saved state from '" << opt.statePath << "' ("
+                  << learner.totalAnswered() << " question(s) answered so far).\n";
+    } else if (opt.fresh) {
+        std::cout << "Starting fresh (any existing state in '" << opt.statePath << "' will be overwritten).\n";
+    }
 
     TemplateEngine engine;
-    int questionNumber = 1;
-    int correctCount = 0;
-    int setQuestionCount = 0;
-    int probQuestionCount = 0;
+    int exitCode = 0;
+    int askedThisRun = 0;
 
-    bool timedOut = false;
-    while (!learner.isCertified(theory)) {
-        if (questionNumber > kMaxQuestions) {
-            timedOut = true;
-            break;
+    auto saveOrWarn = [&]() {
+        if (!learner.saveState(opt.statePath)) {
+            std::cerr << "[WARN] Could not save state to '" << opt.statePath << "'.\n";
         }
-        std::cout << "\n--- Question " << questionNumber++ << " ---\n";
+    };
 
-        GeneratedQuestion q = engine.selectAndInitializeTemplate(learner, theory);
-        bool isCorrect = false;
-        std::string detectedError;
+    std::cout << "(Type 'quit' at an answer prompt to save and exit.)\n";
 
-        if (q.format == AnswerFormat::SET_ANSWER) {
-            setQuestionCount++;
-            std::cout << "Given the following sets:\n";
-            for (const auto& given : q.setGivens) {
-                std::cout << "  " << given.first << " = { ";
-                for (size_t i = 0; i < given.second.size(); ++i) {
-                    std::cout << given.second[i] << (i + 1 < given.second.size() ? ", " : "");
-                }
-                std::cout << " }\n";
+    try {
+        while (!learner.isCertified(theory)) {
+            if (askedThisRun >= maxQuestions) {
+                std::cout << "\nQuestion limit reached (" << maxQuestions << " this run). Not certified.\n";
+                std::cout << "Still missing:\n";
+                for (const auto& b : learner.certificationBlockers(theory)) std::cout << "  - " << b << "\n";
+                exitCode = 3;
+                break;
             }
 
-            std::cout << "\nEvaluate the expression: " << q.questionText << "\n";
-            std::cout << "Enter your answer as a comma-separated list (e.g., 1,2,3): ";
+            Selection sel = engine.selectNext(learner, theory);
+            const GeneratedQuestion& q = sel.question;
 
-            std::string userInputStr;
-            std::getline(std::cin, userInputStr);
-            std::vector<int> studentAnswer = parseUserInput(userInputStr);
+            int number = learner.totalAnswered() + 1;
+            std::cout << "\n--- Question " << number << (sel.isRecheck ? " (final re-check)" : "") << " ---\n";
+            if (opt.verbose) std::cout << "[" << sel.reason << "]\n";
+            if (q.isRepeat) std::cout << "[note] No unused variant exists for this template; this question was asked before.\n";
+            std::cout << q.questionText << "\n";
 
-            isCorrect = (studentAnswer == q.correctAnswer);
-            detectedError = detectSetErrorPattern(q, studentAnswer);
+            ConcreteValue studentValue = promptForAnswer(q.answerType);
+            bool isCorrect = concreteValuesEqual(studentValue, q.correctValue);
+
+            std::string errorName, errorDescription;
+            if (!isCorrect) {
+                for (const auto& mc : q.misconceptions) {
+                    if (concreteValuesEqual(studentValue, mc.value)) {
+                        errorName = mc.name;
+                        errorDescription = mc.description;
+                        break;
+                    }
+                }
+            }
 
             if (isCorrect) {
                 std::cout << "> Correct!\n";
             } else {
-                std::cout << "> Incorrect. The correct answer was: { ";
-                for (size_t i = 0; i < q.correctAnswer.size(); ++i) {
-                    std::cout << q.correctAnswer[i] << (i + 1 < q.correctAnswer.size() ? ", " : "");
-                }
-                std::cout << " }\n";
-                if (!detectedError.empty()) {
-                    std::cout << "  [Detected error pattern: " << detectedError << "]\n";
+                std::cout << "> Incorrect.\n";
+                if (!errorDescription.empty()) {
+                    std::cout << "  [Detected Misconception: " << errorDescription << "]\n";
                 }
             }
-        } else { // PROBABILITY_ANSWER
-            probQuestionCount++;
-            std::cout << "Given:\n";
-            for (const auto& given : q.probGivens) {
-                std::cout << "  " << given.first << " = " << given.second << "\n";
+
+            double pBefore = learner.pKnown(sel.focusConcept);
+
+            Observation obs;
+            obs.templateId = q.templateId;
+            obs.questionText = q.questionText;
+            obs.targets = q.targetConcepts;
+            obs.answerType = q.answerType;
+            obs.difficulty = q.difficulty;
+            obs.correct = isCorrect;
+            obs.errorName = errorName;
+            obs.isRecheck = sel.isRecheck;
+            learner.update(obs);
+            ++askedThisRun;
+
+            double pAfter = learner.pKnown(sel.focusConcept);
+            if (opt.verbose) {
+                std::cout << "  [P(known) of '" << sel.focusConcept << "': " << std::fixed << std::setprecision(3)
+                          << pBefore << " -> " << pAfter << "]\n";
             }
 
-            std::cout << "\nEvaluate: " << q.questionText << "\n";
-            std::cout << "Enter your answer as a decimal (e.g., 0.350): ";
-
-            std::string userInputStr;
-            std::getline(std::cin, userInputStr);
-            double studentAnswer = 0.0;
-            bool parsed = parseProbabilityInput(userInputStr, studentAnswer);
-
-            double expected = std::stod(q.expectedProbAnswer);
-            isCorrect = parsed && std::fabs(studentAnswer - expected) < kProbTolerance;
-            detectedError = (!isCorrect && parsed) ? detectProbabilityErrorPattern(q, studentAnswer) : "";
-
-            if (isCorrect) {
-                std::cout << "> Correct!\n";
-            } else {
-                std::cout << "> Incorrect. The correct answer was: " << q.expectedProbAnswer << "\n";
-                if (!detectedError.empty()) {
-                    std::cout << "  [Detected error pattern: " << detectedError << "]\n";
-                }
-            }
+            appendLog(opt.logPath, number, sel, isCorrect, errorName,
+                      studentValue.toDisplayString(), q.correctValue.toDisplayString(), pBefore, pAfter);
+            saveOrWarn();
         }
-
-        if (isCorrect) correctCount++;
-        learner.update(q.targetConcepts, isCorrect, detectedError);
-
-        std::cout << "\n[Metrics Updated for Targeted Concepts]\n";
-        for (const auto& concept : q.targetConcepts) {
-            std::cout << "  * " << concept
-                      << ": Mastery = " << learner.getMastery(concept)
-                      << ", Coverage = " << learner.getCoverage(concept) << "\n";
-        }
+    } catch (const InputClosed&) {
+        std::cout << "\nInput closed. Progress saved to '" << opt.statePath << "'.\n";
+        saveOrWarn();
+        return 2;
+    } catch (const QuitRequested&) {
+        std::cout << "\nStopped by request. Progress saved to '" << opt.statePath << "'.\n";
+        saveOrWarn();
+        learner.printReport(theory);
+        return 0;
+    } catch (const std::exception& ex) {
+        std::cerr << "\nFatal error during assessment: " << ex.what() << "\n";
+        saveOrWarn();
+        return 1;
     }
 
-    int totalQuestions = questionNumber - 1;
-
-    std::cout << "\n============================================\n";
-    if (timedOut) {
-        std::cout << "   SESSION ENDED (question limit reached)  \n";
-    } else {
-        std::cout << "      MASTERY CERTIFICATION ACHIEVED!       \n";
-    }
-    std::cout << "============================================\n";
+    if (exitCode == 0) std::cout << "\nMASTERY CERTIFICATION ACHIEVED!\n";
     learner.printReport(theory);
-    learner.printFullState();
-
-    printDivider();
-    std::cout << "SESSION STATISTICS\n";
-    printDivider();
-    std::cout << "Total Questions Attempted : " << totalQuestions << "\n";
-    std::cout << "Correct Answers           : " << correctCount << "\n";
-    std::cout << "Incorrect Answers         : " << (totalQuestions - correctCount) << "\n";
-    std::cout << "Set Theory Questions      : " << setQuestionCount << "\n";
-    std::cout << "Probability Questions     : " << probQuestionCount << "\n";
-    if (totalQuestions > 0) {
-        double accuracy = 100.0 * correctCount / totalQuestions;
-        std::cout << "Overall Accuracy          : " << accuracy << "%\n";
-    }
-    printDivider();
-
-    if (!timedOut) {
-        std::cout << "\n";
-        std::cout << "   *****************************************************\n";
-        std::cout << "   *              CERTIFICATE OF MASTERY              *\n";
-        std::cout << "   *****************************************************\n";
-        std::cout << "   * Theory     : " << theory.theoryName << "\n";
-        std::cout << "   * Result     : CERTIFIED\n";
-        std::cout << "   * Questions  : " << totalQuestions << " (Set Theory: " << setQuestionCount
-                   << ", Probability: " << probQuestionCount << ")\n";
-        std::cout << "   * All concepts reached mastery >= 0.8 with coverage >= 3,\n";
-        std::cout << "   * and no error pattern occurred more than twice.\n";
-        std::cout << "   *****************************************************\n";
-    } else {
-        std::cout << "\nNo certificate issued -- the question limit (" << kMaxQuestions
-                   << ") was reached before every concept met the mastery threshold.\n"
-                   << "See the per-concept mastery/coverage above for what still needs work.\n";
-    }
-
-    return 0;
+    return exitCode;
 }

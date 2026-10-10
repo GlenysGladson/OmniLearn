@@ -1,444 +1,193 @@
 #include "TemplateEngine.hpp"
-#include <iostream>
-#include <stdexcept>
+#include "InstanceValidator.hpp"
 #include <algorithm>
-#include <cstdlib>
 #include <cmath>
-#include <sstream>
 #include <iomanip>
+#include <set>
+#include <sstream>
+#include <vector>
 
 namespace {
-    const int kUniverseSize = 6;
 
-    void applyRandomSeed(z3::config& cfg) {
-        std::string seed = std::to_string(rand() % 10000);
-        z3::set_param("sat.random_seed", seed.c_str());
-        z3::set_param("smt.random_seed", seed.c_str());
-    }
-
-    // Injects a random constraint to force Z3 to find different models
-    void injectRandomness(z3::context& c, z3::solver& s, z3::expr& A, int uSize) {
-        int randomBitIndex = rand() % uSize;
-        unsigned mask = 1u << randomBitIndex;
-        z3::expr bit = c.bv_val(mask, uSize);
-
-        // 50% chance to force a random element IN, 50% chance to force it OUT
-        if (rand() % 2 == 0) {
-            s.add((A & bit) != 0);
-        } else {
-            s.add((A & bit) == 0);
+std::vector<const DynamicTemplate*> templatesFor(const FormalTheory& theory, const std::string& concept) {
+    std::vector<const DynamicTemplate*> out;
+    for (const auto& t : theory.templates) {
+        if (std::find(t.targetConcepts.begin(), t.targetConcepts.end(), concept) != t.targetConcepts.end()) {
+            out.push_back(&t);
         }
     }
-
-    // Fixed 3-decimal formatting, used for probability values.
-    std::string formatDecimal(double val) {
-        std::ostringstream oss;
-        oss << std::fixed << std::setprecision(3) << val;
-        return oss.str();
-    }
+    return out;
 }
 
-std::vector<int> TemplateEngine::decodeBitVector(unsigned val, int universeSize) {
-    std::vector<int> result;
-    for (int i = 0; i < universeSize; ++i) {
-        if ((val >> i) & 1) {
-            result.push_back(i + 1);
-        }
+bool exposesError(const DynamicTemplate& t, const std::set<std::string>& errorNames) {
+    for (const auto& mc : t.misconceptions) {
+        if (errorNames.count(mc.name)) return true;
     }
-    return result;
+    return false;
 }
 
-std::string TemplateEngine::makeSignature(const GeneratedQuestion& q) const {
-    std::ostringstream oss;
-    oss << q.questionText;
-    for (const auto& kv : q.setGivens) {          // std::map -> sorted, deterministic
-        oss << "|" << kv.first << "=";
-        for (int v : kv.second) oss << v << ",";
-    }
-    for (const auto& kv : q.probGivens) {
-        oss << "|" << kv.first << "=" << kv.second;
-    }
-    return oss.str();
+std::string fmt2(double x) {
+    std::ostringstream o;
+    o << std::fixed << std::setprecision(2) << x;
+    return o.str();
 }
 
-bool TemplateEngine::registerIfUnique(const GeneratedQuestion& q) {
-    std::string sig = makeSignature(q);
-    if (usedSignatures.count(sig)) return false;
-    usedSignatures.insert(sig);
-    return true;
-}
+} // namespace
 
-GeneratedQuestion TemplateEngine::selectAndInitializeTemplate(const LearnerModel& learner, const FormalTheory& theory) {
-    std::vector<std::string> weak = learner.getWeakConcepts(theory);
-    std::vector<std::string> uncov = learner.getUncoveredConcepts(theory);
+TemplateEngine::TemplateEngine() : rng(std::random_device{}()) {}
 
-    auto needsConcept = [&](const std::string& name) {
-        return std::find(weak.begin(), weak.end(), name) != weak.end() ||
-               std::find(uncov.begin(), uncov.end(), name) != uncov.end();
+bool TemplateEngine::tryConcept(const std::string& concept, bool isRecheck, const LearnerModel& learner,
+                                const FormalTheory& theory, Selection& out, std::string& failure) {
+    std::vector<const DynamicTemplate*> eligible = templatesFor(theory, concept);
+    if (eligible.empty()) {
+        failure = "no template targets '" + concept + "'";
+        return false;
+    }
+
+    std::vector<std::string> errList = learner.activeErrors(concept);
+    std::set<std::string> errors(errList.begin(), errList.end());
+    double target = std::max(0.1, std::min(0.9, learner.pKnown(concept)));
+
+    struct Scored {
+        const DynamicTemplate* t;
+        int errRank;     // 0 = exposes an unresolved error
+        int uses;
+        double gap;
+        unsigned jitter;
     };
-
-    // Priority follows the dependency graph: assess the most
-    // foundational still-weak/uncovered concept first.
-    if (needsConcept("Element") || needsConcept("Membership")) {
-        return generateMembership();
+    std::vector<Scored> scored;
+    for (const auto* t : eligible) {
+        Scored s;
+        s.t = t;
+        s.errRank = (!isRecheck && exposesError(*t, errors)) ? 0 : 1;
+        s.uses = learner.templateUseCount(t->id);
+        s.gap = std::fabs(t->difficulty - target);
+        s.jitter = rng();
+        scored.push_back(s);
     }
-    if (needsConcept("Subset")) {
-        return generateSubset();
-    }
-    if (needsConcept("Complement")) {
-        return generateComplement();
-    }
-    if (needsConcept("Difference") || needsConcept("Intersection")) {
-        return generateIntersectionDifference();
-    }
-    
-    // Probability extension templates prioritized by the dependency graph
-    if (theory.concepts.count("ProbabilityComplement") && needsConcept("ProbabilityComplement")) {
-        return generateProbabilityComplement();
-    }
-    if (theory.concepts.count("InclusionExclusion") && 
-        (needsConcept("InclusionExclusion") || needsConcept("Probability"))) {
-        return generateProbabilityInclusionExclusion();
-    }
-    if (theory.concepts.count("ConditionalProbability") && needsConcept("ConditionalProbability")) {
-        return generateConditionalProbability();
-    }
+    std::sort(scored.begin(), scored.end(), [](const Scored& a, const Scored& b) {
+        if (a.errRank != b.errRank) return a.errRank < b.errRank;
+        if (a.uses != b.uses) return a.uses < b.uses;
+        if (std::fabs(a.gap - b.gap) > 1e-9) return a.gap < b.gap;
+        return a.jitter < b.jitter;
+    });
 
-    // Covers Union and Set; also the fallback once everything else is strong.
-    return generateUnion();
-}
+    bool haveRepeat = false;
+    Selection repeatFallback;
+    std::string lastError;
 
-GeneratedQuestion TemplateEngine::generateIntersectionDifference() {
-    GeneratedQuestion last;
-    for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
-        z3::config cfg;
-        applyRandomSeed(cfg);
-        z3::context c(cfg);
+    for (const auto& s : scored) {
+        try {
+            GeneratedQuestion q = GenericExprEngine::generateInstance(*s.t, learner.asked());
+            InstanceValidationResult ivr = InstanceValidator::validateInstance(q);
+            if (!ivr.isValid) {
+                // Text problems are the same for every assignment, so move on to the next template.
+                lastError = "template '" + s.t->id + "' produced an unusable question: " + ivr.reasons.front();
+                continue;
+            }
+            Selection sel;
+            sel.focusConcept = concept;
+            sel.isRecheck = isRecheck;
 
-        int uSize = kUniverseSize;
+            std::ostringstream why;
+            if (isRecheck) {
+                why << "final re-check of '" << concept << "'";
+            } else {
+                why << (learner.attempts(concept) == 0 ? "uncovered" : "weak")
+                    << " concept '" << concept << "' (P(known)=" << fmt2(learner.pKnown(concept)) << ")";
+                if (s.errRank == 0) why << "; targets an unresolved error pattern";
+            }
+            sel.reason = why.str();
+            sel.question = q;
 
-        z3::expr A = c.bv_const("A", uSize);
-        z3::expr B = c.bv_const("B", uSize);
-        z3::expr C = c.bv_const("C", uSize);
-        z3::solver solver(c);
-
-        solver.add(A != 0 && B != 0 && C != 0);
-        z3::expr interAB = A & B;
-        solver.add(interAB != 0);
-        z3::expr resultExpr = interAB & (~C);
-        solver.add(resultExpr != 0);
-
-        solver.add(A != B);
-        solver.add(B != C);
-
-        injectRandomness(c, solver, A, uSize);
-
-        if (solver.check() == z3::sat) {
-            z3::model m = solver.get_model();
-            GeneratedQuestion q;
-            q.questionText = "(A \u2229 B) - C";
-            q.setGivens["A"] = decodeBitVector(m.eval(A).get_numeral_int(), uSize);
-            q.setGivens["B"] = decodeBitVector(m.eval(B).get_numeral_int(), uSize);
-            q.setGivens["C"] = decodeBitVector(m.eval(C).get_numeral_int(), uSize);
-            q.correctAnswer = decodeBitVector(m.eval(resultExpr).get_numeral_int(), uSize);
-            q.targetConcepts = {"Intersection", "Difference", "Set"};
-            last = q;
-            if (registerIfUnique(q)) return q;
-            continue; // duplicate of an earlier question this session -- retry
+            if (!q.isRepeat) {
+                out = sel;
+                return true;
+            }
+            if (!haveRepeat) {
+                repeatFallback = sel;
+                haveRepeat = true;
+            }
+        } catch (const TemplateError& e) {
+            lastError = e.what();
         }
-        throw std::runtime_error("SMT Solver failed on Intersection/Difference template.");
     }
-    return last;
+
+    if (haveRepeat) {
+        out = repeatFallback;
+        return true;
+    }
+    failure = lastError.empty() ? "no template could be instantiated for '" + concept + "'" : lastError;
+    return false;
 }
 
-GeneratedQuestion TemplateEngine::generateUnion() {
-    GeneratedQuestion last;
-    for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
-        z3::config cfg;
-        applyRandomSeed(cfg);
-        z3::context c(cfg);
+Selection TemplateEngine::selectNext(const LearnerModel& learner, const FormalTheory& theory) {
+    struct Cand {
+        std::string name;
+        double p;
+        bool err;
+        int attempts;
+    };
+    std::vector<Cand> work, recheck;
+    std::vector<std::string> blocked; // need work but have no template
 
-        int uSize = kUniverseSize;
+    for (const auto& kv : theory.concepts) {
+        if (!kv.second.assessable) continue;
+        const std::string& name = kv.first;
 
-        z3::expr A = c.bv_const("A", uSize);
-        z3::expr B = c.bv_const("B", uSize);
-        z3::solver solver(c);
+        bool needsWork = learner.needsWork(name);
+        bool needsRecheck = learner.needsRecheck(name);
+        if (!needsWork && !needsRecheck) continue;
 
-        solver.add(A != 0 && B != 0);
-        solver.add((A & B) == 0);
-        z3::expr resultExpr = A | B;
-
-        injectRandomness(c, solver, A, uSize);
-
-        if (solver.check() == z3::sat) {
-            z3::model m = solver.get_model();
-            GeneratedQuestion q;
-            q.questionText = "A \u222A B";
-            q.setGivens["A"] = decodeBitVector(m.eval(A).get_numeral_int(), uSize);
-            q.setGivens["B"] = decodeBitVector(m.eval(B).get_numeral_int(), uSize);
-            q.correctAnswer = decodeBitVector(m.eval(resultExpr).get_numeral_int(), uSize);
-            q.targetConcepts = {"Union", "Set"};
-            last = q;
-            if (registerIfUnique(q)) return q;
+        if (templatesFor(theory, name).empty()) {
+            blocked.push_back(name);
             continue;
         }
-        throw std::runtime_error("SMT Solver failed on Union template.");
-    }
-    return last;
-}
-
-GeneratedQuestion TemplateEngine::generateMembership() {
-    GeneratedQuestion last;
-    for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
-        z3::config cfg;
-        applyRandomSeed(cfg);
-        z3::context c(cfg);
-
-        int uSize = kUniverseSize;
-
-        z3::expr A = c.bv_const("A", uSize);
-        z3::solver solver(c);
-
-        solver.add(A != 0);
-        solver.add(A != c.bv_val((unsigned)((1u << uSize) - 1), uSize));
-
-        injectRandomness(c, solver, A, uSize);
-
-        if (solver.check() == z3::sat) {
-            z3::model m = solver.get_model();
-            GeneratedQuestion q;
-            q.questionText = "List every element x such that x \u2208 A (universe = {1..6})";
-            q.setGivens["A"] = decodeBitVector(m.eval(A).get_numeral_int(), uSize);
-            q.correctAnswer = q.setGivens["A"];
-            q.targetConcepts = {"Set", "Element", "Membership"};
-            last = q;
-            if (registerIfUnique(q)) return q;
-            continue;
+        Cand c{name, learner.pKnown(name), learner.hasActiveError(name), learner.attempts(name)};
+        if (needsWork) {
+            if (learner.prerequisitesMet(name, theory)) work.push_back(c);
+        } else {
+            recheck.push_back(c);
         }
-        throw std::runtime_error("SMT Solver failed on Membership template.");
     }
-    return last;
-}
 
-GeneratedQuestion TemplateEngine::generateSubset() {
-    GeneratedQuestion last;
-    for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
-        z3::config cfg;
-        applyRandomSeed(cfg);
-        z3::context c(cfg);
+    std::sort(work.begin(), work.end(), [](const Cand& a, const Cand& b) {
+        if (std::fabs(a.p - b.p) > 1e-9) return a.p < b.p;
+        if (a.err != b.err) return a.err;
+        if (a.attempts != b.attempts) return a.attempts < b.attempts;
+        return a.name < b.name;
+    });
+    std::sort(recheck.begin(), recheck.end(), [](const Cand& a, const Cand& b) {
+        if (std::fabs(a.p - b.p) > 1e-9) return a.p < b.p;
+        return a.name < b.name;
+    });
 
-        int uSize = kUniverseSize;
+    std::string failures;
+    Selection sel;
 
-        z3::expr A = c.bv_const("A", uSize);
-        z3::expr B = c.bv_const("B", uSize);
-        z3::solver solver(c);
-
-        solver.add(A != 0 && B != 0);
-        solver.add((A & B) == A);
-        solver.add(A != B);
-        z3::expr resultExpr = B & (~A);
-        solver.add(resultExpr != 0);
-
-        injectRandomness(c, solver, A, uSize);
-
-        if (solver.check() == z3::sat) {
-            z3::model m = solver.get_model();
-            GeneratedQuestion q;
-            q.questionText = "Given A \u2286 B, compute B - A";
-            q.setGivens["A"] = decodeBitVector(m.eval(A).get_numeral_int(), uSize);
-            q.setGivens["B"] = decodeBitVector(m.eval(B).get_numeral_int(), uSize);
-            q.correctAnswer = decodeBitVector(m.eval(resultExpr).get_numeral_int(), uSize);
-            q.targetConcepts = {"Subset", "Difference", "Set"};
-            last = q;
-            if (registerIfUnique(q)) return q;
-            continue;
+    for (const auto& c : work) {
+        std::string why;
+        if (tryConcept(c.name, false, learner, theory, sel, why)) return sel;
+        failures += "  - " + c.name + ": " + why + "\n";
+    }
+    // Final re-checks run only when no concept needs work.
+    if (work.empty()) {
+        for (const auto& c : recheck) {
+            std::string why;
+            if (tryConcept(c.name, true, learner, theory, sel, why)) return sel;
+            failures += "  - " + c.name + " (re-check): " + why + "\n";
         }
-        throw std::runtime_error("SMT Solver failed on Subset template.");
     }
-    return last;
-}
 
-GeneratedQuestion TemplateEngine::generateComplement() {
-    GeneratedQuestion last;
-    for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
-        z3::config cfg;
-        applyRandomSeed(cfg);
-        z3::context c(cfg);
-
-        int uSize = kUniverseSize;
-
-        z3::expr A = c.bv_const("A", uSize);
-        z3::solver solver(c);
-
-        z3::expr full = c.bv_val((unsigned)((1u << uSize) - 1), uSize);
-        solver.add(A != 0);
-        solver.add(A != full);
-        z3::expr resultExpr = full & (~A);
-
-        injectRandomness(c, solver, A, uSize);
-
-        if (solver.check() == z3::sat) {
-            z3::model m = solver.get_model();
-            GeneratedQuestion q;
-            q.questionText = "Complement of A w.r.t. the universe {1..6}";
-            q.setGivens["A"] = decodeBitVector(m.eval(A).get_numeral_int(), uSize);
-            q.correctAnswer = decodeBitVector(m.eval(resultExpr).get_numeral_int(), uSize);
-            q.targetConcepts = {"Complement", "Set"};
-            last = q;
-            if (registerIfUnique(q)) return q;
-            continue;
-        }
-        throw std::runtime_error("SMT Solver failed on Complement template.");
+    std::string msg = "No question can be produced.";
+    if (!blocked.empty()) {
+        msg += "\n  Concepts that need questions but have no template: ";
+        for (size_t i = 0; i < blocked.size(); ++i) msg += (i ? ", " : "") + blocked[i];
+        msg += "\n  Concepts that depend on them stay blocked until a template is added.";
     }
-    return last;
-}
-
-// Generates valid, non-trivial probability parameters purely via Z3 integer constraints
-// using a discrete sample space denominator (N = 20, resolution 0.05).
-GeneratedQuestion TemplateEngine::generateProbabilityInclusionExclusion() {
-    GeneratedQuestion last;
-    for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
-        z3::config cfg;
-        applyRandomSeed(cfg);
-        z3::context c(cfg);
-        z3::solver s(c);
-
-        const int N = 20; // Universe size (each step is 0.05)
-
-        z3::expr countA = c.int_const("countA");
-        z3::expr countB = c.int_const("countB");
-        z3::expr countInter = c.int_const("countInter");
-        z3::expr countUnion = c.int_const("countUnion");
-
-        // Axiom: Inclusion-Exclusion formula
-        s.add(countUnion == countA + countB - countInter);
-
-        // Axiom: Probabilities bounded within [0, 1]
-        s.add(countUnion <= N);
-        s.add(countA >= 3 && countA <= N - 3);
-        s.add(countB >= 3 && countB <= N - 3);
-
-        // Non-triviality constraints (strictly overlapping, not subsets/disjoint)
-        s.add(countInter >= 2);
-        s.add(countInter < countA && countInter < countB);
-
-        // Random guidance to explore different valid models
-        int targetA = 4 + (rand() % (N - 7));
-        s.add(countA == targetA);
-
-        if (s.check() == z3::sat) {
-            z3::model m = s.get_model();
-            double pA = m.eval(countA).get_numeral_int() / static_cast<double>(N);
-            double pB = m.eval(countB).get_numeral_int() / static_cast<double>(N);
-            double pAandB = m.eval(countInter).get_numeral_int() / static_cast<double>(N);
-            double pAorB = m.eval(countUnion).get_numeral_int() / static_cast<double>(N);
-
-            GeneratedQuestion q;
-            q.format = AnswerFormat::PROBABILITY_ANSWER;
-            q.questionText = "Find P(A \u222A B)";
-            q.probGivens["P(A)"] = formatDecimal(pA);
-            q.probGivens["P(B)"] = formatDecimal(pB);
-            q.probGivens["P(A \u2229 B)"] = formatDecimal(pAandB);
-            q.expectedProbAnswer = formatDecimal(pAorB);
-            q.targetConcepts = {"Probability", "Union", "InclusionExclusion"};
-
-            last = q;
-            if (registerIfUnique(q)) return q;
-            continue;
-        }
-        throw std::runtime_error("SMT Solver failed on Probability template.");
+    if (!failures.empty()) msg += "\n  Template failures:\n" + failures;
+    if (blocked.empty() && failures.empty()) {
+        msg += " Nothing needs work or a re-check (the learner may already be certified).";
     }
-    return last;
-}
-
-// Probability Complement: P(A') = 1 - P(A)
-GeneratedQuestion TemplateEngine::generateProbabilityComplement() {
-    GeneratedQuestion last;
-    for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
-        z3::config cfg;
-        applyRandomSeed(cfg);
-        z3::context c(cfg);
-        z3::solver s(c);
-
-        const int N = 20;
-        z3::expr countA = c.int_const("countA");
-        z3::expr countComp = c.int_const("countComp");
-
-        s.add(countA + countComp == N);
-        s.add(countA >= 2 && countA <= N - 2);
-
-        int targetA = 3 + (rand() % (N - 5));
-        s.add(countA == targetA);
-
-        if (s.check() == z3::sat) {
-            z3::model m = s.get_model();
-            double pA = m.eval(countA).get_numeral_int() / static_cast<double>(N);
-            double pComp = m.eval(countComp).get_numeral_int() / static_cast<double>(N);
-
-            GeneratedQuestion q;
-            q.format = AnswerFormat::PROBABILITY_ANSWER;
-            q.questionText = "Find P(A\u1D9C) given P(A)";
-            q.probGivens["P(A)"] = formatDecimal(pA);
-            q.expectedProbAnswer = formatDecimal(pComp);
-            q.targetConcepts = {"Probability", "Complement", "ProbabilityComplement"};
-
-            last = q;
-            if (registerIfUnique(q)) return q;
-            continue;
-        }
-        throw std::runtime_error("SMT Solver failed on Probability Complement template.");
-    }
-    return last;
-}
-
-// Conditional Probability: P(A | B) = P(A ∩ B) / P(B)
-GeneratedQuestion TemplateEngine::generateConditionalProbability() {
-    GeneratedQuestion last;
-    for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
-        z3::config cfg;
-        applyRandomSeed(cfg);
-        z3::context c(cfg);
-        z3::solver s(c);
-
-        const int N = 20;
-        z3::expr countB = c.int_const("countB");
-        z3::expr countInter = c.int_const("countInter");
-
-        // P(A ∩ B) <= P(B)
-        s.add(countInter >= 2);
-        s.add(countInter < countB);
-        s.add(countB <= N);
-
-        // Constrain countB to divisors of 20 or 100 for clean terminating decimals
-        s.add(countB == 4 || countB == 5 || countB == 10 || countB == 20);
-
-        // Random exploration
-        int options[] = {4, 5, 10, 20};
-        int chosenB = options[rand() % 4];
-        s.add(countB == chosenB);
-
-        if (s.check() == z3::sat) {
-            z3::model m = s.get_model();
-            int bVal = m.eval(countB).get_numeral_int();
-            int interVal = m.eval(countInter).get_numeral_int();
-
-            double pB = bVal / static_cast<double>(N);
-            double pInter = interVal / static_cast<double>(N);
-            double pCond = static_cast<double>(interVal) / static_cast<double>(bVal);
-
-            GeneratedQuestion q;
-            q.format = AnswerFormat::PROBABILITY_ANSWER;
-            q.questionText = "Find P(A | B)";
-            q.probGivens["P(B)"] = formatDecimal(pB);
-            q.probGivens["P(A \u2229 B)"] = formatDecimal(pInter);
-            q.expectedProbAnswer = formatDecimal(pCond);
-            q.targetConcepts = {"Probability", "Intersection", "ConditionalProbability"};
-
-            last = q;
-            if (registerIfUnique(q)) return q;
-            continue;
-        }
-        throw std::runtime_error("SMT Solver failed on Conditional Probability template.");
-    }
-    return last;
+    throw TemplateError(msg);
 }

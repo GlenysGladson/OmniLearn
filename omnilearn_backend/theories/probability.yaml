@@ -1,0 +1,87 @@
+theory_name: "Probability Theory"
+
+concepts:
+  - id: "ProbabilitySpace"
+    category: "DATATYPE"
+    assessable: false
+  - id: "InclusionExclusion"
+    category: "PROBABILITY"
+    assessable: true
+  - id: "ConditionalProbability"
+    category: "PROBABILITY"
+    assessable: true
+
+dependencies:
+  - prereq: "ProbabilitySpace"
+    dependent: "InclusionExclusion"
+  - prereq: "ProbabilitySpace"
+    dependent: "ConditionalProbability"
+
+templates:
+  - id: "prob_inc_exc_01"
+    targets: ["InclusionExclusion"]
+    question_text: "Given P(A) = {pA}%, P(B) = {pB}%, and P(A union B) = {pUnion}%, compute P(A intersect B) in percent."
+    variables:
+      - name: "pA"
+        sort: "Int"
+      - name: "pB"
+        sort: "Int"
+      - name: "pUnion"
+        sort: "Int"
+    constraints:
+      - "(>= pA 20)"
+      - "(<= pA 50)"
+      - "(>= pB 20)"
+      - "(<= pB 50)"
+      - "(>= (- (+ pA pB) pUnion) 5)"
+      - "(<= (- (+ pA pB) pUnion) 15)"
+      - "(>= pUnion 30)"
+      - "(<= pUnion 85)"
+    correct_answer_expr: "(- (+ pA pB) pUnion)"
+    answer_type: "Int"
+    misconceptions:
+      - name: "AssumedIndependence"
+        expr: "(div (* pA pB) 100)"
+        description: "Treated A and B as independent (multiplied the percentages) instead of using inclusion-exclusion"
+
+  - id: "prob_cond_01"
+    targets: ["ConditionalProbability"]
+    question_text: "Given P(A intersect B) = {pInter}%, and P(B) = {pB}%, compute P(A|B) in percent."
+    variables:
+      - name: "pInter"
+        sort: "Int"
+      - name: "pB"
+        sort: "Int"
+    constraints:
+      - "(>= pB 10)"
+      - "(<= pB 80)"
+      - "(>= pInter 5)"
+      - "(<= pInter pB)"
+      - "(= 0 (mod (* pInter 100) pB))"
+    correct_answer_expr: "(div (* pInter 100) pB)"
+    answer_type: "Int"
+    misconceptions:
+      - name: "DividedByIntersection"
+        expr: "(div (* pB 100) pInter)"
+        description: "Divided P(B) by P(A intersect B) instead of the other way around."
+
+  - id: "prob_cond_02"
+    targets: ["ConditionalProbability"]
+    question_text: "Given P(A intersect B) = {pInter}%, and P(A) = {pA}%, compute P(B|A) in percent."
+    variables:
+      - name: "pInter"
+        sort: "Int"
+      - name: "pA"
+        sort: "Int"
+    constraints:
+      - "(>= pA 10)"
+      - "(<= pA 80)"
+      - "(>= pInter 5)"
+      - "(<= pInter pA)"
+      - "(= 0 (mod (* pInter 100) pA))"
+    correct_answer_expr: "(div (* pInter 100) pA)"
+    answer_type: "Int"
+    misconceptions:
+      - name: "DividedByIntersection"
+        expr: "(div (* pA 100) pInter)"
+        description: "Divided P(A) by P(A intersect B) instead of the other way around."
