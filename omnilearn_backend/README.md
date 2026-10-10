@@ -1,127 +1,185 @@
-# OmniLearn — Theory-Driven Adaptive Assessment (Set Theory + Probability)
+# OmniLearn — Theory-Driven Adaptive Assessment
 
-Automatic question generation for mastery-based assessment, using the Z3
-SMT solver to *construct* valid question instances (find concrete sets /
-probabilities satisfying a template's constraints) rather than to grade
-answers. Grading is done directly in C++ against the model Z3 returned.
+Z3-backed adaptive question generation and mastery tracking, driven
+entirely by YAML theory files — no domain logic is hardcoded in C++.
+Z3 is used generically (via SMT-LIB2 string parsing) to *construct*
+valid question instances satisfying a template's constraints; grading
+is done in C++ against the concrete model Z3 returned.
 
-This implements the framework described in `notes.pdf` / the accompanying
-lecture note: a formal theory `T = ⟨D, O, Rel, P, R, G⟩`, a learner model
-tracking `Mastery`/`Coverage`/`ErrorPatterns` per concept, and a loop that
-generates questions targeting the learner's weakest concepts until every
-concept is certified.
+## Architecture
+
+- **YAML theory files** (`theories/*.yaml`) define concepts, BKT
+  parameters, prerequisite dependencies, and question templates
+  (variables, Z3 constraints, correct-answer expression,
+  misconceptions) per domain.
+- **`YamlParser`** parses each file into a `FormalTheory`.
+  `FormalTheory::merge()` combines multiple parsed files into one
+  theory, so templates can reference concepts defined in a different
+  file (cross-domain prerequisites).
+- **`GenericExprEngine`** turns a `DynamicTemplate` into a live Z3
+  query (`ctx.parse_string`), finds a satisfying instance, and
+  evaluates the correct answer and all misconception answers against
+  it — no per-domain operator code.
+- **`LearnerModel`** runs Bayesian Knowledge Tracing (BKT) per concept
+  (`pInit`, `pLearn`, `pSlip`, `pGuess`) and tracks attempts, recent
+  accuracy, and error patterns.
+- **`TemplateEngine`** selects the next question: filters to concepts
+  whose prerequisites are already mastered, scores remaining concepts
+  by weakness, and asks `GenericExprEngine` for an instance.
+- **`TemplateValidator`** / **`InstanceValidator`** check theory files
+  and generated instances respectively, independent of the generation
+  code that produced them.
 
 ## Build & run
 
 ```bash
-sudo apt-get install libz3-dev cmake g++      # if not already installed
+sudo apt-get install libz3-dev libyaml-cpp-dev cmake g++
 mkdir build && cd build
 cmake ..
 make
-.\omnilearn_tests
-.\omnilearn_validate ..\theories\
-./omnilearn_backend
-
+./omnilearn_tests                  # unit tests (TemplateValidator)
+./omnilearn_validate ../theories/  # validate all YAML files
+./omnilearn_backend ../theories/ --verbose   # run an assessment session
 ```
+
+`omnilearn_backend` defaults its theories directory to `theories/` if
+no argument is given; `omnilearn_validate` requires the directory
+argument explicitly. CMake locates Z3 via its own CMake package, with
+Linux fallbacks; the build is Linux/WSL-only, native Windows isn't
+supported. Configure stops with a clear error if engine source file
+names don't match the expected case.
 
 ## What's covered
 
-- **Set Theory**: Set, Element, Membership, Subset, Union, Intersection,
-  Difference, Complement.
-- **Probability**: `P(A)`, `P(B)`, `P(A∩B)` given → student computes
-  `P(A∪B)` via Inclusion-Exclusion.
+- **Set Theory**: Union, Intersection, Difference (over 6-bit sets).
+- **Combinatorics**: counting/permutation templates.
+- **Probability**: Inclusion-Exclusion, Conditional Probability —
+  gated behind Set Theory (`Union`/`Intersection` must show sufficient
+  mastery and recent accuracy before these unlock).
 
-Both areas share one `LearnerModel` and one certification pass — the
-assessment doesn't end until *every* concept in *both* areas reaches
-`Mastery ≥ 0.8` with `Coverage ≥ 3`, and no error pattern remains
-persistent (see "Certification" below).
+Adding a new template or domain means writing/editing a YAML file —
+no C++ changes, as long as the needed SMT theory (BitVec, Int, Real,
+Bool) and operators are already things Z3's parser understands, which
+covers all current templates.
 
-Properties and Inference Rules (Commutativity, DeMorgan, Union
-Introduction, Subset Transitivity, and the Boolean/Equality concepts)
-stay in the concept space for completeness but are marked
-non-assessable, same as the original design — they need a true/false or
-proof-style answer format the current question UI doesn't support, and
-including them in certification would make the loop unable to terminate.
+## Norms / patterns adopted
 
-## What changed from the uploaded files
+These are the recurring design rules the project has converged on
+while fixing real bugs — stated here so new YAML/templates stay
+consistent with them rather than reintroducing the same bugs:
 
-The uploaded code already had the right shape (Z3-backed template
-generation, dependency-ordered concept selection, mastery/coverage
-tracking). Three things kept it from doing what you actually asked for:
+- **No domain logic in C++.** Every operator, constraint, and correct
+  answer is an SMT-LIB2 string in YAML, evaluated generically. A
+  template needing new question logic is a YAML change, not a C++
+  change.
+- **Multi-file theories are always parsed, then merged, then
+  validated.** Any tool that loads YAML (`main.cpp`'s
+  `loadAllTheories`, `validate_main.cpp`) follows parse-all →
+  `FormalTheory::merge()` → validate-combined, so cross-file
+  prerequisites and targets resolve correctly. A tool that validates
+  file-by-file in isolation is considered a bug (this is what
+  `validate_main.cpp` had and was fixed for). Template IDs must be
+  unique across all files, since merging would otherwise silently
+  collide them.
+- **Dependency-cycle checks run before anything else can mask them.**
+  A cycle in the prerequisite graph is reported as a cycle, not as
+  the downstream "no templates available" symptom it used to produce.
+- **Certification requires three independent signals, not one.**
+  `isMastered()` needs `pKnown ≥ 0.95` AND `attempts ≥ 3` AND
+  `recentAccuracy ≥ 0.80` over the last 10 attempts, plus a final
+  clean re-check question. A single probabilistic estimate crossing a
+  threshold is not treated as sufficient evidence of mastery, and a
+  concept whose mastery later drops is returned to the active work
+  list rather than staying marked done.
+- **No width or magic literal belongs in a constraint string.**
+  Width-dependent literals (e.g. a BitVec's zero value) are written as
+  `{zero:VAR}` tokens expanded by the parser from that variable's own
+  declared `width`, never hand-typed per constraint. This was a real
+  bug (hardcoded `(_ bv0 6)` scattered through `set_theory.yaml`) and
+  the convention exists specifically to prevent it recurring.
+- **Non-trivial instances are a correctness requirement, not
+  polish.** A template must constrain out answers that collapse to a
+  degenerate case (e.g. Union where one set is a subset of the other,
+  Difference where the sets don't overlap). Generating a technically
+  "satisfying" but pedagogically meaningless instance is treated as a
+  template bug.
+- **Misconception answers are checked for collision, not assumed
+  distinct.** At generation time, `GenericExprEngine` drops any
+  misconception whose value equals the correct answer or an earlier
+  kept misconception for that specific instance. At load time, a
+  misconception that clashes across all 3 sampled instances is
+  dropped from the template entirely, with a warning — so a
+  structurally broken misconception doesn't silently vanish on every
+  instance without anyone noticing.
+- **Every generated answer is independently re-derived.** Before a
+  question is shown, `recomputeInFreshContext()` re-evaluates every
+  expression in a brand-new Z3 context from the printed variable
+  values, to catch evaluation bugs. This catches evaluation/parsing
+  slips only — it does not catch a template whose formula answers the
+  wrong question, which is a separate, template-correctness concern.
+- **Repeated questions are avoided, repeated concepts are not.**
+  Before accepting a generated instance, the engine tries other
+  templates for the same concept if the exact question would repeat a
+  prior one this session; if none remain, the question is flagged as
+  a repeat rather than silently shown. Revisiting the same *concept*
+  with different values is intentional (that's how mastery is built);
+  repeating the exact same *question* is not.
+- **Z3 errors never crash the process.** `z3::exception` does not
+  derive from `std::exception`, so an uncaught one would terminate
+  the program; all Z3 exceptions are converted to `TemplateError` at
+  the boundary.
+- **Strict input parsing, no silent defaults.** Answer parsing
+  re-prompts on invalid input rather than defaulting to 0/false, so a
+  typo is never silently graded as an answer.
 
-1. **Probability was written but never wired in.** `TemplateEngine.hpp`
-   explicitly said not to use `generateProbabilityInclusionExclusion()`
-   because no `FormalTheory` defined its target concepts. Added
-   `FormalTheory::createFullTheory()` (Set Theory + Probability, with
-   `Complement → Probability → InclusionExclusion` in the dependency
-   graph) and wired the template into `selectAndInitializeTemplate()`.
-   `main.cpp` now builds both question formats and prompts/grades each
-   correctly (`AnswerFormat::SET_ANSWER` vs `PROBABILITY_ANSWER`).
+## Known limitations (unaddressed, stated plainly)
 
-2. **The probability answer was actually wrong.** The original code left
-   `P(A∪B)` as an unconstrained free real, so Z3 could (and did) return
-   any value ≤ 1 — unrelated to `P(A)+P(B)-P(A∩B)`. Grading against it
-   would have graded students against a nonsense number. Fixed to derive
-   `P(A∪B)` directly via Inclusion-Exclusion, with Z3 used to verify the
-   result is a valid probability (consistent with how the rest of the
-   engine uses Z3 as the constraint-checking layer, not the randomness
-   source).
-
-3. **Certification could hang forever.** `isCertified()` requires every
-   error pattern's frequency to stay `≤ 2`, but nothing ever reduced that
-   count — so a student who made the same slip 3 times could never be
-   certified, no matter how many correct answers followed. The
-   assessment loop would then spin indefinitely (verified by running an
-   adversarial auto-answering script — it hung past 290 questions with
-   no path to completion). Fixed by letting a clean correct answer decay
-   old error-pattern counts by 1 (`LearnerModel::update`), so persistent
-   *really* means persistent, not "ever happened 3 times." Also added a
-   hard 200-question safety cap in `main.cpp` so a genuinely-stuck
-   session (e.g. a concept the learner truly can't answer) ends with a
-   clear "no certificate, here's what needs work" message instead of
-   running forever.
-
-Also added, to satisfy "generate one by one, no repetition, only concept
-repetition":
-
-- `TemplateEngine` now tracks a signature (question text + exact given
-  values) for every question generated this session and retries
-  (up to 25 attempts, fresh random seed each time) if Z3/the random draw
-  would produce an exact repeat. The same *concept* is deliberately
-  revisited with different values until mastered — that's the point of
-  the loop — but the same *question* never is. Verified: 0 duplicate
-  questions across a clean 20-question run and an adversarial
-  47-question run with wrong answers mixed in.
-
-Final output now also includes a session-statistics block (question
-count, accuracy, Set Theory vs Probability breakdown) and a plain-text
-certificate once certification is reached.
+- No automated pilot or simulated-learner evaluation has been run —
+  the BKT parameters and mastery thresholds are design choices, not
+  empirically tuned (slip/guess vary by answer type and difficulty,
+  but this is not fitted IRT).
+- Real-type (fraction) answer input and tolerance checking are
+  implemented but currently unused — no Real-typed template exists
+  yet to exercise them.
+- Set-answer input accepts element values outside a template's actual
+  bit-width range rather than validating against it.
+- Random instance generation pins variables to feasible values where
+  possible, but unbounded Int/Real variables are still left to Z3's
+  own (often degenerate) model.
+- Z3 context setup (`set_param`) and the random seed are process
+  global state — fine for a single-user console app, not safe if the
+  engine is ever reused concurrently.
+- Only `TemplateValidator` has unit tests; no tests exist for
+  `GenericExprEngine`, `LearnerModel`, or `TemplateEngine` selection
+  logic.
+- MCQ/MSQ answer formats and any LLM-assisted features are deferred
+  (no API key provisioned) — not implemented, not partially stubbed.
+- "Right answer, wrong understanding" (lucky guesses inflating
+  mastery) is not specifically detected beyond what `pGuess`/`pSlip`
+  already model.
+- No comparison against existing adaptive-assessment tools or
+  published systems has been done.
 
 ## Files
 
 | File | Role |
 |---|---|
-| `Theory.hpp` | `FormalTheory` — concept space + dependency graph. `createSetTheory()` unchanged; `createFullTheory()` is new (adds Probability). |
-| `LearnerModel.hpp/.cpp` | Mastery/Coverage/ErrorPatterns tracking, certification check. |
-| `TemplateEngine.hpp/.cpp` | Z3-backed question generation for both Set Theory and Probability, with duplicate-question guarding. |
-| `main.cpp` | The assessment loop — prompts, grades, updates the learner model, prints final stats and certificate. |
-| `CMakeLists.txt` | Unchanged — already builds all of the above against Z3. |
-
-## Reference material (not part of the build)
-
-`notes.pdf`, `set_theory.pdf`, and `SAT_SMT_Solver_Explanation.pdf` are
-your design notes and background reading, not project deliverables — I
-left them out of the code package. Worth keeping around for your own
-review/defense of the design, but I'd leave the raw shared-ChatGPT export
-(`SAT_SMT_Solver_Explanation.pdf`) out of anything you actually hand in;
-it reads as a chat transcript rather than a document you authored. If you
-want, I can turn its content into a proper written explanation section
-for your report instead.
+| `Theory.hpp/.cpp` | `FormalTheory` — concepts, dependency graph, `merge()`, cycle detection. |
+| `YamlParser.hpp/.cpp` | Parses theory YAML into `FormalTheory` + `DynamicTemplate`s. |
+| `GenericExprEngine.hpp/.cpp` | Z3-generic instance generation, misconception evaluation, independent re-check. |
+| `LearnerModel.hpp/.cpp` | BKT update, mastery/certification check, state save/load. |
+| `TemplateEngine.hpp/.cpp` | Next-question selection (prerequisite gating + weakness scoring). |
+| `TemplateValidator.hpp/.cpp` | Static validation of templates/concepts/dependencies. |
+| `InstanceValidator.hpp/.cpp` | Runtime validation of a generated instance. |
+| `main.cpp` | `omnilearn_backend` — the assessment loop. |
+| `validate_main.cpp` | `omnilearn_validate` — standalone theory-file validator CLI. |
+| `test_validator.cpp` | `omnilearn_tests` — unit tests for `TemplateValidator`. |
+| `theories/*.yaml` | Theory content: Set Theory, Combinatorics, Probability. |
 
 ## Suggested next steps (not done here — flagging for scope)
 
-- A true/false or step-justification answer format for Properties/Rules
-  (Commutativity, DeMorgan, etc.), so those concepts can join
-  certification instead of staying permanently non-assessable.
-- Persist session results (JSON/CSV) instead of only printing to stdout,
-  if you want to show progress across multiple sessions.
+- Simulated-learner evaluation to sanity-check BKT parameter choices
+  before relying on them for a real cohort.
+- Unit tests for `GenericExprEngine` and `TemplateEngine` selection
+  logic, not just `TemplateValidator`.
+- Bound set-answer element input to the template's actual bit-width.

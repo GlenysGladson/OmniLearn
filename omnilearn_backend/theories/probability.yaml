@@ -16,6 +16,10 @@ dependencies:
     dependent: "InclusionExclusion"
   - prereq: "ProbabilitySpace"
     dependent: "ConditionalProbability"
+  - prereq: "Union"
+    dependent: "InclusionExclusion"
+  - prereq: "Intersection"
+    dependent: "ConditionalProbability"
 
 templates:
   - id: "prob_inc_exc_01"

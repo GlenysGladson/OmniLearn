@@ -38,9 +38,10 @@ templates:
         width: 6
     constraints:
       - "(distinct A B)"
-      - "(distinct A (_ bv0 6))"
-      - "(distinct B (_ bv0 6))"
-      - "(distinct (bvor A B) (_ bv0 6))"
+      - "(distinct A {zero:A})"
+      - "(distinct B {zero:B})"
+      - "(distinct (bvand A (bvnot B)) {zero:A})"
+      - "(distinct (bvand B (bvnot A)) {zero:B})"
     correct_answer_expr: "(bvor A B)"
     answer_type: "Set"
     misconceptions:
@@ -60,9 +61,11 @@ templates:
         width: 6
     constraints:
       - "(distinct A B)"
-      - "(distinct A (_ bv0 6))"
-      - "(distinct B (_ bv0 6))"
-      - "(distinct (bvand A B) (_ bv0 6))"
+      - "(distinct A {zero:A})"
+      - "(distinct B {zero:B})"
+      - "(distinct (bvand A B) {zero:A})"
+      - "(distinct (bvand A (bvnot B)) {zero:A})"
+      - "(distinct (bvand B (bvnot A)) {zero:B})"
     correct_answer_expr: "(bvand A B)"
     answer_type: "Set"
     misconceptions:
@@ -82,9 +85,10 @@ templates:
         width: 6
     constraints:
       - "(distinct A B)"
-      - "(distinct A (_ bv0 6))"
-      - "(distinct B (_ bv0 6))"
-      - "(distinct (bvand A (bvnot B)) (_ bv0 6))"
+      - "(distinct A {zero:A})"
+      - "(distinct B {zero:B})"
+      - "(distinct (bvand A (bvnot B)) {zero:A})"
+      - "(distinct (bvand A B) {zero:A})"
     correct_answer_expr: "(bvand A (bvnot B))"
     answer_type: "Set"
     misconceptions:
