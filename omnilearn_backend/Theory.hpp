@@ -15,10 +15,25 @@ enum class ConceptCategory {
     GRAPH_THEORY
 };
 
+// Bayesian Knowledge Tracing parameters for one concept.
+//   pInit  : P(student already knows the concept before any question)
+//   pLearn : P(student learns the concept after one more question)
+//   pSlip  : P(wrong answer | student knows the concept)
+//   pGuess : P(right answer | student does NOT know the concept)
+// These defaults are NOT fitted to data. They are reasonable starting
+// values. A concept may override them in YAML under `bkt:`.
+struct BktParams {
+    double pInit  = 0.10;
+    double pLearn = 0.15;
+    double pSlip  = 0.10;
+    double pGuess = 0.10;
+};
+
 struct Concept {
     std::string name;
     ConceptCategory category;
     bool assessable = true;
+    BktParams bkt;
 };
 
 // One variable used inside a template. `sort` is the Z3/SMT-LIB2 sort this
@@ -28,17 +43,14 @@ struct Concept {
 struct VariableDef {
     std::string name;
     std::string sort;
-    unsigned width = 6; // only meaningful when sort == "BitVec"; default of
-                        // 6 kept for backward compatibility with the
-                        // original fixed "universe size" convention.
+    unsigned width = 6; // only meaningful when sort == "BitVec"
 };
 
 // A misconception is itself just another SMT-LIB2 expression: "what would
-// the answer be if a student made this specific mistake". It's evaluated
-// with exactly the same machinery as correct_answer_expr, against the same
-// concrete variable values, and compared to the student's actual answer.
-// This is what makes misconception detection generic across every theory
-// instead of hand-coded per theory in C++.
+// the answer be if a student made this specific mistake". `name` is the
+// stable identifier used to count error patterns (per concept), so two
+// templates that expose the same mistake should use the same `name`.
+// `description` is only the text shown to the student.
 struct MisconceptionDef {
     std::string name;
     std::string expr;
@@ -51,39 +63,44 @@ struct DynamicTemplate {
     std::string questionText;
     std::vector<VariableDef> variables;
 
-    // Bare boolean SMT-LIB2 expressions, e.g. "(distinct A B)" or
-    // "(> a 0)". Each is auto-wrapped as "(assert ...)" when solved --
-    // authors do not write "assert" themselves.
+    // Bare boolean SMT-LIB2 expressions. Each is wrapped as "(assert ...)".
     std::vector<std::string> constraints;
 
-    // Bare SMT-LIB2 expression evaluated against the solved instance,
-    // e.g. "(bvor A B)" or "(+ a b)".
+    // Bare SMT-LIB2 expression evaluated against the solved instance.
     std::string correctAnswerExpr;
 
-    // How to interpret & compare correctAnswerExpr's result and the
-    // student's typed answer: "Int", "Real", "Bool", or "Set" (a decoded
-    // BitVec, entered as comma-separated integers).
+    // "Int", "Real", "Bool", or "Set" (a decoded BitVec).
     std::string answerType;
 
     std::vector<MisconceptionDef> misconceptions;
+
+    // Optional. 0.0 = easy, 1.0 = hard. Default 0.5 means "average".
+    // Used to adjust BKT guess/slip and to choose between templates.
+    double difficulty = 0.5;
 };
 
 class FormalTheory {
 public:
     std::string theoryName;
     std::map<std::string, Concept> concepts;
+
+    // prerequisite -> list of dependents
     std::map<std::string, std::vector<std::string>> dependencyGraph;
     std::vector<DynamicTemplate> templates;
 
-    // Names of every theory file that has been folded into this object via
-    // merge().
     std::vector<std::string> sourceTheories;
 
     FormalTheory() = default;
     FormalTheory(const std::string& name) : theoryName(name) {}
 
-    void addConcept(const std::string& name, ConceptCategory category, bool assessable = true) {
-        concepts[name] = {name, category, assessable};
+    void addConcept(const std::string& name, ConceptCategory category, bool assessable = true,
+                    const BktParams& bkt = BktParams()) {
+        Concept c;
+        c.name = name;
+        c.category = category;
+        c.assessable = assessable;
+        c.bkt = bkt;
+        concepts[name] = c;
     }
 
     void addDependency(const std::string& prereq, const std::string& dependent) {
@@ -95,18 +112,24 @@ public:
         return it != concepts.end() && it->second.assessable;
     }
 
+    // Direct prerequisites of `concept` (edges prereq -> concept).
+    std::vector<std::string> prerequisitesOf(const std::string& concept) const;
+
+    // Assessable prerequisites that must be mastered before `concept` is
+    // asked. A non-assessable prerequisite is never asked about, so the
+    // search passes through it to ITS prerequisites. Unknown concept names
+    // are ignored.
+    std::vector<std::string> assessablePrerequisites(const std::string& concept) const;
+
+    // Returns one dependency cycle as a path (first == last), or an empty
+    // vector if the graph is acyclic.
+    std::vector<std::string> findDependencyCycle() const;
+
     // Folds another theory's concepts, dependency edges, and templates into
-    // this one. Concept-name collisions are NOT overwritten -- the first
-    // definition wins, and a warning is printed to stderr so the collision
-    // is visible instead of silently resolved.
+    // this one. Concept-name collisions keep the first definition and warn.
     void merge(const FormalTheory& other);
 
-    // Prints a non-fatal warning (to stderr) for every assessable concept
-    // that no (successfully validated) template targets. Such a concept
-    // can never accumulate coverage, so certification could never
-    // complete for it. This generalizes a real bug found in an earlier
-    // version of set_theory.yaml (a "Difference" concept with no
-    // template) into a standing startup check.
+    // Warns for every assessable concept that no template targets.
     void warnOnUnreachableConcepts() const;
 };
 

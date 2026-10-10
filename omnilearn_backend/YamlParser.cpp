@@ -1,17 +1,50 @@
 #include "YamlParser.hpp"
 #include <yaml-cpp/yaml.h>
+#include <iostream>
+#include <set>
 #include <stdexcept>
 
 namespace {
 
-ConceptCategory parseCategory(const std::string& s) {
-    if (s == "OPERATION") return ConceptCategory::OPERATION;
-    if (s == "RELATION") return ConceptCategory::RELATION;
-    if (s == "PROPERTY") return ConceptCategory::PROPERTY;
-    if (s == "RULE") return ConceptCategory::RULE;
-    if (s == "PROBABILITY") return ConceptCategory::PROBABILITY;
-    if (s == "GRAPH_THEORY") return ConceptCategory::GRAPH_THEORY;
-    return ConceptCategory::DATATYPE;
+bool parseCategory(const std::string& s, ConceptCategory& out) {
+    if (s == "DATATYPE")     { out = ConceptCategory::DATATYPE;     return true; }
+    if (s == "OPERATION")    { out = ConceptCategory::OPERATION;    return true; }
+    if (s == "RELATION")     { out = ConceptCategory::RELATION;     return true; }
+    if (s == "PROPERTY")     { out = ConceptCategory::PROPERTY;     return true; }
+    if (s == "RULE")         { out = ConceptCategory::RULE;         return true; }
+    if (s == "PROBABILITY")  { out = ConceptCategory::PROBABILITY;  return true; }
+    if (s == "GRAPH_THEORY") { out = ConceptCategory::GRAPH_THEORY; return true; }
+    return false;
+}
+
+double readNumber(const YAML::Node& node, const std::string& file, const std::string& what) {
+    try {
+        return node.as<double>();
+    } catch (const std::exception&) {
+        throw std::runtime_error(file + ": " + what + " must be a number");
+    }
+}
+
+BktParams parseBkt(const YAML::Node& node, const std::string& file, const std::string& conceptId) {
+    BktParams p;
+    if (!node.IsMap()) {
+        throw std::runtime_error(file + ": concept '" + conceptId + "': 'bkt' must be a map "
+                                 "(keys: p_init, p_learn, p_slip, p_guess)");
+    }
+    static const std::set<std::string> known = {"p_init", "p_learn", "p_slip", "p_guess"};
+    for (const auto& kv : node) {
+        std::string key = kv.first.as<std::string>();
+        if (!known.count(key)) {
+            std::cerr << "[WARN] " << file << ": concept '" << conceptId
+                      << "': unknown bkt key '" << key << "' ignored.\n";
+        }
+    }
+    std::string ctx = "concept '" + conceptId + "' bkt.";
+    if (node["p_init"])  p.pInit  = readNumber(node["p_init"],  file, ctx + "p_init");
+    if (node["p_learn"]) p.pLearn = readNumber(node["p_learn"], file, ctx + "p_learn");
+    if (node["p_slip"])  p.pSlip  = readNumber(node["p_slip"],  file, ctx + "p_slip");
+    if (node["p_guess"]) p.pGuess = readNumber(node["p_guess"], file, ctx + "p_guess");
+    return p;
 }
 
 } // namespace
@@ -28,9 +61,20 @@ FormalTheory YamlParser::parseTheoryFile(const std::string& filepath) {
         for (const auto& node : config["concepts"]) {
             if (!node["id"]) throw std::runtime_error(filepath + ": a concept is missing 'id'");
             std::string name = node["id"].as<std::string>();
-            std::string catStr = node["category"] ? node["category"].as<std::string>() : "DATATYPE";
+
+            ConceptCategory cat = ConceptCategory::DATATYPE;
+            if (node["category"]) {
+                std::string catStr = node["category"].as<std::string>();
+                if (!parseCategory(catStr, cat)) {
+                    std::cerr << "[WARN] " << filepath << ": concept '" << name
+                              << "' has unknown category '" << catStr << "'; using DATATYPE.\n";
+                    cat = ConceptCategory::DATATYPE;
+                }
+            }
             bool assessable = node["assessable"] ? node["assessable"].as<bool>() : true;
-            theory.addConcept(name, parseCategory(catStr), assessable);
+            BktParams bkt;
+            if (node["bkt"]) bkt = parseBkt(node["bkt"], filepath, name);
+            theory.addConcept(name, cat, assessable, bkt);
         }
     }
 
@@ -92,6 +136,11 @@ FormalTheory YamlParser::parseTheoryFile(const std::string& filepath) {
                 throw std::runtime_error(filepath + ": template '" + tmpl.id + "' is missing 'answer_type'");
             }
             tmpl.answerType = node["answer_type"].as<std::string>();
+
+            if (node["difficulty"]) {
+                tmpl.difficulty = readNumber(node["difficulty"], filepath,
+                                             "template '" + tmpl.id + "' difficulty");
+            }
 
             if (node["misconceptions"]) {
                 for (const auto& errNode : node["misconceptions"]) {

@@ -1,4 +1,5 @@
 #include "InstanceValidator.hpp"
+#include <regex>
 
 using namespace std;
 
@@ -11,8 +12,12 @@ InstanceValidationResult InstanceValidator::validateInstance(const GeneratedQues
     if (q.questionText.empty()) {
         addReason("Question text is completely empty.");
     }
-    if (q.questionText.find('{') != string::npos || q.questionText.find('}') != string::npos) {
-        addReason("Question text contains unreplaced placeholder brackets '{}'.");
+    // A placeholder looks like {name} (a letter or underscore first). Rendered sets
+    // such as {5, 6}, {3} or {} are NOT placeholders and must not be flagged.
+    static const regex placeholder("\\{[A-Za-z_][A-Za-z0-9_]*\\}");
+    smatch m;
+    if (regex_search(q.questionText, m, placeholder)) {
+        addReason("Question text contains an unreplaced placeholder '" + m.str() + "'.");
     }
 
     // 2. Misconception overlap with correct answer
@@ -20,7 +25,7 @@ InstanceValidationResult InstanceValidator::validateInstance(const GeneratedQues
     // the student shouldn't be falsely accused of a misconception when they type the right answer!
     for (const auto& mc : q.misconceptions) {
         if (concreteValuesEqual(q.correctValue, mc.value)) {
-            addReason("Misconception '" + mc.description + "' yields the exact same value (" + 
+            addReason("Misconception '" + mc.description + "' yields the exact same value (" +
                       mc.value.toDisplayString() + ") as the correct answer.");
         }
     }
@@ -30,8 +35,8 @@ InstanceValidationResult InstanceValidator::validateInstance(const GeneratedQues
     for (size_t i = 0; i < q.misconceptions.size(); ++i) {
         for (size_t j = i + 1; j < q.misconceptions.size(); ++j) {
             if (concreteValuesEqual(q.misconceptions[i].value, q.misconceptions[j].value)) {
-                addReason("Misconception '" + q.misconceptions[i].description + 
-                          "' and Misconception '" + q.misconceptions[j].description + 
+                addReason("Misconception '" + q.misconceptions[i].description +
+                          "' and Misconception '" + q.misconceptions[j].description +
                           "' yield the exact same value (" + q.misconceptions[i].value.toDisplayString() + ").");
             }
         }

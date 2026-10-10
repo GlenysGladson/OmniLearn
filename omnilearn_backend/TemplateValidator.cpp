@@ -3,6 +3,7 @@
 #include <sstream>
 #include <regex>
 #include <iostream>
+#include <cmath>
 
 using namespace std;
 
@@ -40,6 +41,12 @@ ValidationResult TemplateValidator::validateTemplate(const DynamicTemplate& tmpl
         }
     }
 
+    if (tmpl.questionText.empty()) addError("question_text is empty");
+
+    if (!(tmpl.difficulty >= 0.0 && tmpl.difficulty <= 1.0)) {
+        addError("difficulty must be between 0 and 1");
+    }
+
     if (tmpl.constraints.empty()) addError("No constraints provided");
 
     if (tmpl.correctAnswerExpr.empty()) addError("correct_answer_expr is empty");
@@ -61,7 +68,11 @@ ValidationResult TemplateValidator::validateTemplate(const DynamicTemplate& tmpl
         next++;
     }
 
+    set<string> mcNames;
     for (const auto& mc : tmpl.misconceptions) {
+        if (!mc.name.empty() && !mcNames.insert(mc.name).second) {
+            addError("Duplicate misconception name: " + mc.name);
+        }
         if (mc.name.empty()) addError("Misconception has empty name");
         if (mc.expr.empty()) addError("Misconception " + mc.name + " has empty expr");
         if (mc.description.empty()) addError("Misconception " + mc.name + " has empty description");
@@ -132,9 +143,58 @@ ValidationResult TemplateValidator::validateTemplate(const DynamicTemplate& tmpl
     return res;
 }
 
+ValidationResult TemplateValidator::validateConcepts(const FormalTheory& theory) {
+    ValidationResult res;
+    res.isValid = true;
+    auto bad = [&](const string& c, const string& msg) {
+        res.isValid = false;
+        res.errors.push_back("Concept '" + c + "': " + msg);
+    };
+    for (const auto& pair : theory.concepts) {
+        const BktParams& b = pair.second.bkt;
+        if (!(b.pInit > 0.0 && b.pInit < 1.0)) bad(pair.first, "bkt.p_init must be between 0 and 1 (exclusive)");
+        if (!(b.pLearn >= 0.0 && b.pLearn < 1.0)) bad(pair.first, "bkt.p_learn must be in [0, 1)");
+        if (!(b.pSlip >= 0.0 && b.pSlip < 0.5)) bad(pair.first, "bkt.p_slip must be in [0, 0.5)");
+        if (!(b.pGuess >= 0.0 && b.pGuess <= 0.5)) bad(pair.first, "bkt.p_guess must be in [0, 0.5]");
+    }
+    return res;
+}
+
+ValidationResult TemplateValidator::validateDependencies(const FormalTheory& theory) {
+    ValidationResult res;
+    res.isValid = true;
+    for (const auto& pair : theory.dependencyGraph) {
+        for (const auto& dep : pair.second) {
+            if (!theory.concepts.count(pair.first)) {
+                res.warnings.push_back("Dependency " + pair.first + " -> " + dep +
+                                       ": unknown prerequisite concept '" + pair.first + "' (edge ignored)");
+            }
+            if (!theory.concepts.count(dep)) {
+                res.warnings.push_back("Dependency " + pair.first + " -> " + dep +
+                                       ": unknown dependent concept '" + dep + "' (edge ignored)");
+            }
+        }
+    }
+    std::vector<std::string> cycle = theory.findDependencyCycle();
+    if (!cycle.empty()) {
+        res.isValid = false;
+        string path;
+        for (size_t i = 0; i < cycle.size(); ++i) path += (i ? " -> " : "") + cycle[i];
+        res.errors.push_back("Dependency cycle: " + path);
+    }
+    return res;
+}
+
 ValidationResult TemplateValidator::validateTheory(const FormalTheory& theory) {
     ValidationResult res;
     res.isValid = true;
+    {
+        ValidationResult cr = validateConcepts(theory);
+        if (!cr.isValid) {
+            res.isValid = false;
+            for (const auto& e : cr.errors) res.errors.push_back(e);
+        }
+    }
     set<string> seenIds;
     for (const auto& tmpl : theory.templates) {
         auto tr = validateTemplate(tmpl, theory, seenIds);
@@ -147,3 +207,5 @@ ValidationResult TemplateValidator::validateTheory(const FormalTheory& theory) {
     }
     return res;
 }
+
+
