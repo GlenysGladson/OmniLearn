@@ -52,6 +52,7 @@ bool TemplateEngine::tryConcept(const std::string& concept, bool isRecheck, cons
         const DynamicTemplate* t;
         int errRank;     // 0 = exposes an unresolved error
         int uses;
+        int orderRank;   // implementer's configured template order rank
         double gap;
         unsigned jitter;
     };
@@ -61,6 +62,7 @@ bool TemplateEngine::tryConcept(const std::string& concept, bool isRecheck, cons
         s.t = t;
         s.errRank = (!isRecheck && exposesError(*t, errors)) ? 0 : 1;
         s.uses = learner.templateUseCount(t->id);
+        s.orderRank = theory.getTemplateOrderRank(t->id);
         s.gap = std::fabs(t->difficulty - target);
         s.jitter = rng();
         scored.push_back(s);
@@ -68,6 +70,7 @@ bool TemplateEngine::tryConcept(const std::string& concept, bool isRecheck, cons
     std::sort(scored.begin(), scored.end(), [](const Scored& a, const Scored& b) {
         if (a.errRank != b.errRank) return a.errRank < b.errRank;
         if (a.uses != b.uses) return a.uses < b.uses;
+        if (a.orderRank != b.orderRank) return a.orderRank < b.orderRank;
         if (std::fabs(a.gap - b.gap) > 1e-9) return a.gap < b.gap;
         return a.jitter < b.jitter;
     });
@@ -151,13 +154,19 @@ Selection TemplateEngine::selectNext(const LearnerModel& learner, const FormalTh
         }
     }
 
-    std::sort(work.begin(), work.end(), [](const Cand& a, const Cand& b) {
-        if (std::fabs(a.p - b.p) > 1e-9) return a.p < b.p;
+    std::sort(work.begin(), work.end(), [&](const Cand& a, const Cand& b) {
         if (a.err != b.err) return a.err;
+        int rankA = theory.getConceptOrderRank(a.name);
+        int rankB = theory.getConceptOrderRank(b.name);
+        if (rankA != rankB) return rankA < rankB;
+        if (std::fabs(a.p - b.p) > 1e-9) return a.p < b.p;
         if (a.attempts != b.attempts) return a.attempts < b.attempts;
         return a.name < b.name;
     });
-    std::sort(recheck.begin(), recheck.end(), [](const Cand& a, const Cand& b) {
+    std::sort(recheck.begin(), recheck.end(), [&](const Cand& a, const Cand& b) {
+        int rankA = theory.getConceptOrderRank(a.name);
+        int rankB = theory.getConceptOrderRank(b.name);
+        if (rankA != rankB) return rankA < rankB;
         if (std::fabs(a.p - b.p) > 1e-9) return a.p < b.p;
         return a.name < b.name;
     });

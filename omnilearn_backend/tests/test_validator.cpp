@@ -119,6 +119,24 @@ void runTests() {
         tmpl.answerType = "Int";
         testValidator(tmpl, false, "UNSAT constraints");
     }
+
+    {
+        FormalTheory t("CurriculumTest");
+        t.concepts["ConceptA"] = { "ConceptA", ConceptCategory::OPERATION, true };
+        t.concepts["ConceptB"] = { "ConceptB", ConceptCategory::OPERATION, true };
+        DynamicTemplate t1; t1.id = "tmpl_1"; t1.targetConcepts = {"ConceptA"};
+        DynamicTemplate t2; t2.id = "tmpl_2"; t2.targetConcepts = {"ConceptB"};
+        t.templates = { t1, t2 };
+        t.templateOrder = { "tmpl_2", "tmpl_1" };
+        t.applyTemplateOrder();
+        assert(t.templates[0].id == "tmpl_2");
+        assert(t.templates[1].id == "tmpl_1");
+        assert(t.getConceptOrderRank("ConceptB") < t.getConceptOrderRank("ConceptA"));
+        ValidationResult res = TemplateValidator::validateCurriculum(t);
+        assert(res.isValid);
+        assert(res.warnings.empty());
+        cout << "PASS: Curriculum template order test" << endl;
+    }
 }
 
 int main() {

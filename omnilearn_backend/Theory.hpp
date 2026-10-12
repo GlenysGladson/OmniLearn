@@ -112,6 +112,9 @@ public:
         return it != concepts.end() && it->second.assessable;
     }
 
+    std::vector<std::string> templateOrder;
+    std::vector<std::string> conceptOrder;
+
     // Direct prerequisites of `concept` (edges prereq -> concept).
     std::vector<std::string> prerequisitesOf(const std::string& concept) const;
 
@@ -128,6 +131,15 @@ public:
     // Folds another theory's concepts, dependency edges, and templates into
     // this one. Concept-name collisions keep the first definition and warn.
     void merge(const FormalTheory& other);
+
+    // Reorders `templates` in-place according to `templateOrder`.
+    void applyTemplateOrder();
+
+    // Returns the curriculum priority rank for a concept (lower index = higher priority).
+    int getConceptOrderRank(const std::string& conceptName) const;
+
+    // Returns the curriculum priority rank for a template (lower index = higher priority).
+    int getTemplateOrderRank(const std::string& templateId) const;
 
     // Warns for every assessable concept that no template targets.
     void warnOnUnreachableConcepts() const;

@@ -208,4 +208,24 @@ ValidationResult TemplateValidator::validateTheory(const FormalTheory& theory) {
     return res;
 }
 
+ValidationResult TemplateValidator::validateCurriculum(const FormalTheory& theory) {
+    ValidationResult res;
+    res.isValid = true;
+    std::set<std::string> existingTemplates;
+    for (const auto& t : theory.templates) {
+        existingTemplates.insert(t.id);
+    }
+    for (const auto& tId : theory.templateOrder) {
+        if (!existingTemplates.count(tId)) {
+            res.warnings.push_back("template_order refers to unknown template id '" + tId + "'");
+        }
+    }
+    for (const auto& cId : theory.conceptOrder) {
+        if (!theory.concepts.count(cId)) {
+            res.warnings.push_back("concept_order refers to unknown concept id '" + cId + "'");
+        }
+    }
+    return res;
+}
+
 

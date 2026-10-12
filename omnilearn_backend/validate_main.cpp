@@ -56,8 +56,9 @@ int main(int argc, char* argv[]) {
     // Pass 2: merge everything so cross-file target concepts resolve correctly.
     FormalTheory combined("CombinedTheorySet");
     for (const auto& t : parsed) combined.merge(t);
+    combined.applyTemplateOrder();
 
-    // Pass 3: validate the combined theory (concepts/BKT, templates, dependencies).
+    // Pass 3: validate the combined theory (concepts/BKT, templates, curriculum order, dependencies).
     std::cout << "\nValidating combined theory (" << parsed.size() << " file(s), "
               << combined.concepts.size() << " concept(s), "
               << combined.templates.size() << " template(s))...\n";
@@ -75,6 +76,9 @@ int main(int argc, char* argv[]) {
         std::cout << "  FAIL (templates)\n";
         for (const auto& e : tr.errors) std::cerr << "    - " << e << "\n";
     }
+
+    ValidationResult curRes = TemplateValidator::validateCurriculum(combined);
+    for (const auto& w : curRes.warnings) std::cerr << "  [WARN] " << w << "\n";
 
     ValidationResult dr = TemplateValidator::validateDependencies(combined);
     for (const auto& w : dr.warnings) std::cerr << "  [WARN] " << w << "\n";

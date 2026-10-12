@@ -86,6 +86,8 @@ FormalTheory loadAllTheories(const std::string& theoriesDir) {
         FormalTheory validated(theory.theoryName);
         validated.concepts = theory.concepts;
         validated.dependencyGraph = theory.dependencyGraph;
+        validated.templateOrder = theory.templateOrder;
+        validated.conceptOrder = theory.conceptOrder;
 
         int validCount = 0, invalidCount = 0;
         for (const auto& original : theory.templates) {
@@ -142,6 +144,11 @@ FormalTheory loadAllTheories(const std::string& theoriesDir) {
 
         combined.merge(validated);
     }
+
+    combined.applyTemplateOrder();
+
+    ValidationResult curRes = TemplateValidator::validateCurriculum(combined);
+    for (const auto& w : curRes.warnings) std::cerr << "[WARN] " << w << "\n";
 
     ValidationResult dr = TemplateValidator::validateDependencies(combined);
     for (const auto& w : dr.warnings) std::cerr << "[WARN] " << w << "\n";

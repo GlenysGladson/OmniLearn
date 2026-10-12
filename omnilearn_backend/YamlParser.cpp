@@ -117,6 +117,18 @@ FormalTheory YamlParser::parseTheoryFile(const std::string& filepath) {
         }
     }
 
+    if (config["template_order"]) {
+        for (const auto& node : config["template_order"]) {
+            theory.templateOrder.push_back(node.as<std::string>());
+        }
+    }
+
+    if (config["concept_order"]) {
+        for (const auto& node : config["concept_order"]) {
+            theory.conceptOrder.push_back(node.as<std::string>());
+        }
+    }
+
     if (config["templates"]) {
         for (const auto& node : config["templates"]) {
             DynamicTemplate tmpl;

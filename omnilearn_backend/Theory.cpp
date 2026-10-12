@@ -31,7 +31,69 @@ void FormalTheory::merge(const FormalTheory& other) {
         templates.push_back(tmpl);
     }
 
+    for (const auto& tId : other.templateOrder) {
+        if (std::find(templateOrder.begin(), templateOrder.end(), tId) == templateOrder.end()) {
+            templateOrder.push_back(tId);
+        }
+    }
+
+    for (const auto& cId : other.conceptOrder) {
+        if (std::find(conceptOrder.begin(), conceptOrder.end(), cId) == conceptOrder.end()) {
+            conceptOrder.push_back(cId);
+        }
+    }
+
     sourceTheories.push_back(other.theoryName);
+}
+
+void FormalTheory::applyTemplateOrder() {
+    if (templateOrder.empty()) return;
+
+    std::map<std::string, int> rank;
+    for (size_t i = 0; i < templateOrder.size(); ++i) {
+        rank[templateOrder[i]] = static_cast<int>(i);
+    }
+
+    std::stable_sort(templates.begin(), templates.end(), [&](const DynamicTemplate& a, const DynamicTemplate& b) {
+        int rA = rank.count(a.id) ? rank[a.id] : 999999;
+        int rB = rank.count(b.id) ? rank[b.id] : 999999;
+        return rA < rB;
+    });
+}
+
+int FormalTheory::getConceptOrderRank(const std::string& conceptName) const {
+    if (!conceptOrder.empty()) {
+        auto it = std::find(conceptOrder.begin(), conceptOrder.end(), conceptName);
+        if (it != conceptOrder.end()) {
+            return static_cast<int>(std::distance(conceptOrder.begin(), it));
+        }
+        return 999999;
+    }
+    if (!templateOrder.empty()) {
+        for (size_t i = 0; i < templateOrder.size(); ++i) {
+            const std::string& tmplId = templateOrder[i];
+            for (const auto& t : templates) {
+                if (t.id == tmplId) {
+                    if (std::find(t.targetConcepts.begin(), t.targetConcepts.end(), conceptName) != t.targetConcepts.end()) {
+                        return static_cast<int>(i);
+                    }
+                }
+            }
+        }
+        return 999999;
+    }
+    return 0;
+}
+
+int FormalTheory::getTemplateOrderRank(const std::string& templateId) const {
+    if (!templateOrder.empty()) {
+        auto it = std::find(templateOrder.begin(), templateOrder.end(), templateId);
+        if (it != templateOrder.end()) {
+            return static_cast<int>(std::distance(templateOrder.begin(), it));
+        }
+        return 999999;
+    }
+    return 0;
 }
 
 void FormalTheory::warnOnUnreachableConcepts() const {

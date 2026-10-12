@@ -24,6 +24,9 @@ public:
     // Errors: a dependency cycle (it would block question selection for ever).
     // Warnings: an edge that names an unknown concept (it is ignored).
     static ValidationResult validateDependencies(const FormalTheory& theory);
+
+    // Checks that any configured template_order and concept_order refer to existing templates and concepts.
+    static ValidationResult validateCurriculum(const FormalTheory& theory);
 };
 
 #endif // TEMPLATE_VALIDATOR_HPP

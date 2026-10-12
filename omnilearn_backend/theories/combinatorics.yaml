@@ -1,10 +1,20 @@
 theory_name: "Combinatorics"
 
 concepts:
+  # ---------- Foundations ----------
   - id: "CountingPrinciple"
     category: "OPERATION"
     assessable: true
 
+  - id: "FactorialEvaluation"
+    category: "OPERATION"
+    assessable: true
+
+  - id: "FactorialSimplification"
+    category: "OPERATION"
+    assessable: true
+
+  # ---------- Core ----------
   - id: "Permutation"
     category: "OPERATION"
     assessable: true
@@ -13,18 +23,78 @@ concepts:
     category: "OPERATION"
     assessable: true
 
+  # ---------- Variations ----------
+  - id: "PermutationWithRepetition"
+    category: "OPERATION"
+    assessable: true
+
+  - id: "PermutationOfIdenticalObjects"
+    category: "OPERATION"
+    assessable: true
+
+  - id: "CircularPermutation"
+    category: "OPERATION"
+    assessable: true
+
 dependencies:
+  - prereq: "FactorialEvaluation"
+    dependent: "FactorialSimplification"
+
   - prereq: "CountingPrinciple"
+    dependent: "Permutation"
+
+  - prereq: "FactorialSimplification"
     dependent: "Permutation"
 
   - prereq: "CountingPrinciple"
     dependent: "Combination"
+
+  - prereq: "Permutation"
+    dependent: "Combination"
+
+  - prereq: "CountingPrinciple"
+    dependent: "PermutationWithRepetition"
+
+  - prereq: "Permutation"
+    dependent: "PermutationOfIdenticalObjects"
+
+  - prereq: "FactorialSimplification"
+    dependent: "PermutationOfIdenticalObjects"
+
+  - prereq: "Permutation"
+    dependent: "CircularPermutation"
 
 templates:
 
   # ==================================================
   # COUNTING PRINCIPLE
   # ==================================================
+
+  - id: "comb_rule_of_sum_01"
+    targets: ["CountingPrinciple"]
+
+    question_text: "A library shelf has {a} fiction books and {b} science books. A student wants to borrow exactly one book. In how many ways can the student choose?"
+
+    variables:
+      - name: "a"
+        sort: "Int"
+      - name: "b"
+        sort: "Int"
+
+    constraints:
+      - "(>= a 2)"
+      - "(<= a 9)"
+      - "(>= b 3)"
+      - "(<= b 9)"
+
+    correct_answer_expr: "(+ a b)"
+    answer_type: "Int"
+
+    misconceptions:
+      - name: "MultipliedChoicesInsteadOfAdding"
+        expr: "(* a b)"
+        description: "Multiplied the number of choices even though the student picks one book (an 'or' situation)."
+
 
   - id: "comb_counting_01"
     targets: ["CountingPrinciple"]
@@ -53,8 +123,97 @@ templates:
 
 
   # ==================================================
+  # FACTORIAL EVALUATION
+  # ==================================================
+
+  - id: "comb_factorial_eval_01"
+    targets: ["FactorialEvaluation"]
+
+    question_text: "Evaluate {n}!"
+
+    variables:
+      - name: "n"
+        sort: "Int"
+
+    constraints:
+      - "(>= n 4)"
+      - "(<= n 7)"
+
+    correct_answer_expr: "(ite (= n 4) 24 (ite (= n 5) 120 (ite (= n 6) 720 5040)))"
+    answer_type: "Int"
+
+    misconceptions:
+      - name: "DoubledInsteadOfFactorial"
+        expr: "(* n 2)"
+        description: "Treated n! as n multiplied by 2."
+
+      - name: "IgnoredFactorialSign"
+        expr: "n"
+        description: "Treated the factorial sign as punctuation and returned n."
+
+
+  # ==================================================
+  # FACTORIAL SIMPLIFICATION
+  # ==================================================
+
+  - id: "comb_factorial_simplify_01"
+    targets: ["FactorialSimplification"]
+
+    question_text: "Simplify {n}! / {m}!"
+
+    variables:
+      - name: "n"
+        sort: "Int"
+      - name: "m"
+        sort: "Int"
+
+    constraints:
+      - "(>= n 6)"
+      - "(<= n 10)"
+      - "(or (= m (- n 2)) (= m (- n 3)))"
+
+    correct_answer_expr: "(ite (= m (- n 2)) (* n (- n 1)) (* n (* (- n 1) (- n 2))))"
+    answer_type: "Int"
+
+    misconceptions:
+      - name: "SubtractedNumbersInsteadOfCancelling"
+        expr: "(- n m)"
+        description: "Subtracted n and m instead of cancelling the common factorial terms."
+
+      - name: "KeptOnlyLargestTerm"
+        expr: "n"
+        description: "Cancelled too many terms and kept only n."
+
+
+  # ==================================================
   # PERMUTATION
   # ==================================================
+
+  - id: "comb_arrange_all_01"
+    targets: ["Permutation"]
+
+    question_text: "In how many different ways can {n} distinct books be arranged in a row on a shelf?"
+
+    variables:
+      - name: "n"
+        sort: "Int"
+
+    constraints:
+      - "(>= n 3)"
+      - "(<= n 6)"
+
+    correct_answer_expr: "(ite (= n 3) 6 (ite (= n 4) 24 (ite (= n 5) 120 720)))"
+    answer_type: "Int"
+
+    misconceptions:
+      - name: "CountedOnlyOnePosition"
+        expr: "n"
+        description: "Counted only the choices for the first position."
+
+      - name: "DidNotReduceChoices"
+        expr: "(* n n)"
+        description: "Forgot that the number of available books decreases after each placement."
+
 
   - id: "comb_permutation_01"
     targets: ["Permutation"]
@@ -112,3 +271,101 @@ templates:
       - name: "UsedPermutationInsteadOfCombination"
         expr: "(ite (= r 2) (* n (- n 1)) (ite (= r 3) (* n (* (- n 1) (- n 2))) (* n (* (- n 1) (* (- n 2) (- n 3))))))"
         description: "Used a permutation calculation even though order does not matter."
+
+
+  # ==================================================
+  # PERMUTATION WITH REPETITION
+  # ==================================================
+
+  - id: "comb_perm_repetition_01"
+    targets: ["PermutationWithRepetition"]
+
+    question_text: "How many {r}-letter codes can be formed from {n} different letters if a letter may be used more than once?"
+
+    variables:
+      - name: "n"
+        sort: "Int"
+      - name: "r"
+        sort: "Int"
+
+    constraints:
+      - "(>= n 4)"
+      - "(<= n 6)"
+      - "(>= r 2)"
+      - "(<= r 4)"
+
+    correct_answer_expr: "(ite (= r 2) (* n n) (ite (= r 3) (* n (* n n)) (* n (* n (* n n)))))"
+    answer_type: "Int"
+
+    misconceptions:
+      - name: "UsedPermutationWithoutRepetition"
+        expr: "(ite (= r 2) (* n (- n 1)) (ite (= r 3) (* n (* (- n 1) (- n 2))) (* n (* (- n 1) (* (- n 2) (- n 3))))))"
+        description: "Reduced the number of choices after each position even though letters can be reused."
+
+      - name: "MultipliedBaseByExponent"
+        expr: "(* n r)"
+        description: "Computed n times r instead of multiplying n by itself r times."
+
+
+  # ==================================================
+  # PERMUTATION OF IDENTICAL OBJECTS
+  # ==================================================
+
+  - id: "comb_perm_identical_01"
+    targets: ["PermutationOfIdenticalObjects"]
+
+    question_text: "{n} books are arranged in a row. {k} of them are identical copies of the same book and the remaining books are all different. How many distinct arrangements are possible?"
+
+    variables:
+      - name: "n"
+        sort: "Int"
+      - name: "k"
+        sort: "Int"
+
+    constraints:
+      - "(>= n 4)"
+      - "(<= n 6)"
+      - "(>= k 2)"
+      - "(<= k 3)"
+
+    correct_answer_expr: "(ite (= n 4) (ite (= k 2) 12 4) (ite (= n 5) (ite (= k 2) 60 20) (ite (= k 2) 360 120)))"
+    answer_type: "Int"
+
+    misconceptions:
+      - name: "TreatedAllObjectsAsDistinct"
+        expr: "(ite (= n 4) 24 (ite (= n 5) 120 720))"
+        description: "Counted n! arrangements and did not divide by k! for the identical copies."
+
+      - name: "SubtractedInsteadOfDividing"
+        expr: "(ite (= n 4) (ite (= k 2) 22 18) (ite (= n 5) (ite (= k 2) 118 114) (ite (= k 2) 718 714)))"
+        description: "Subtracted k! from n! instead of dividing by k!."
+
+
+  # ==================================================
+  # CIRCULAR PERMUTATION
+  # ==================================================
+
+  - id: "comb_circular_01"
+    targets: ["CircularPermutation"]
+
+    question_text: "In how many different ways can {n} people be seated around a circular table if only their positions relative to each other matter?"
+
+    variables:
+      - name: "n"
+        sort: "Int"
+
+    constraints:
+      - "(>= n 4)"
+      - "(<= n 6)"
+
+    correct_answer_expr: "(ite (= n 4) 6 (ite (= n 5) 24 120))"
+    answer_type: "Int"
+
+    misconceptions:
+      - name: "UsedLinearArrangement"
+        expr: "(ite (= n 4) 24 (ite (= n 5) 120 720))"
+        description: "Used n! as for a row, without fixing one person to remove rotations."
+
+      - name: "OnlyFixedOnePerson"
+        expr: "(- n 1)"
+        description: "Fixed one person but did not arrange the remaining people."
