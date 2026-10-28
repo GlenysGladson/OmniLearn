@@ -1,50 +1,43 @@
-#pragma once
+#ifndef TEMPLATE_ENGINE_HPP
+#define TEMPLATE_ENGINE_HPP
+
 #include "LearnerModel.hpp"
-#include <z3++.h>
-#include <vector>
+#include "Theory.hpp"
+#include "GenericExprEngine.hpp"
+#include <random>
 #include <string>
-#include <map>
-#include <set>
 
-// Tells main.cpp how to prompt for / evaluate the answer.
-enum class AnswerFormat { SET_ANSWER, PROBABILITY_ANSWER };
-
-struct GeneratedQuestion {
-    std::string questionText;
-    AnswerFormat format = AnswerFormat::SET_ANSWER;
-    std::vector<int> correctAnswer;
-    std::vector<std::string> targetConcepts; 
-    
-    // Maps to hold the generated concrete values
-    std::map<std::string, std::vector<int>> setGivens;
-    std::map<std::string, std::string> probGivens;
-    std::string expectedProbAnswer;
+// What the engine hands back: the question plus why it was chosen.
+struct Selection {
+    GeneratedQuestion question;
+    std::string focusConcept;   // the concept that drove the choice
+    bool isRecheck = false;     // final re-check question
+    std::string reason;         // short human-readable explanation
 };
 
 class TemplateEngine {
 private:
-    std::vector<int> decodeBitVector(unsigned val, int universeSize);
+    std::mt19937 rng;
 
-    // Guards against generating the exact same question (same givens)
-    // twice in a session. Repeating a *concept* is expected and required
-    // for mastery -- repeating the identical question is not.
-    std::set<std::string> usedSignatures;
-    static const int kMaxRetries = 25;
-
-    std::string makeSignature(const GeneratedQuestion& q) const;
-    bool registerIfUnique(const GeneratedQuestion& q);
+    bool tryConcept(const std::string& concept, bool isRecheck, const LearnerModel& learner,
+                    const FormalTheory& theory, Selection& out, std::string& failure);
 
 public:
-    GeneratedQuestion selectAndInitializeTemplate(const LearnerModel& learner, const FormalTheory& theory);
+    TemplateEngine();
 
-    GeneratedQuestion generateUnion();
-    GeneratedQuestion generateIntersectionDifference();
-    GeneratedQuestion generateMembership();
-    GeneratedQuestion generateSubset();
-    GeneratedQuestion generateComplement();
-
-    // Probability Generators
-    GeneratedQuestion generateProbabilityInclusionExclusion();
-    GeneratedQuestion generateProbabilityComplement();
-    GeneratedQuestion generateConditionalProbability();
+    // Chooses the next question.
+    //  1. Concepts that need work (weak, uncovered, or with an unresolved
+    //     error pattern) whose assessable prerequisites are mastered,
+    //     lowest P(known) first; ties go to concepts with an active error,
+    //     then to fewer attempts.
+    //  2. Inside that concept, templates that expose an unresolved error
+    //     come first, then the least-used templates, then the difficulty
+    //     closest to the learner's current P(known).
+    //  3. When nothing needs work, one final re-check question for each
+    //     concept that has not passed it.
+    // Throws TemplateError when no question can be produced (for example, a
+    // concept that needs work has no template, which blocks its dependents).
+    Selection selectNext(const LearnerModel& learner, const FormalTheory& theory);
 };
+
+#endif // TEMPLATE_ENGINE_HPP

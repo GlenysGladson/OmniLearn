@@ -1,0 +1,110 @@
+theory_name: "ConceptDependencyGraph"
+
+# ==============================================================================
+# CONCEPT DEPENDENCY GRAPH & CURRICULUM ORDER
+# ==============================================================================
+# This configuration file specifies:
+#  1. 'dependencies': The concept prerequisite graph. A concept cannot be
+#     attempted until all of its assessable prerequisites are mastered.
+#  2. 'template_order': The exact sequence of templates configured by the
+#     implementer. Questions are prioritized according to this order rather
+#     than alphabetical order.
+#  3. 'concept_order': The curriculum progression of concepts.
+# ==============================================================================
+
+dependencies:
+  # ----------------------------------------------------------------------------
+  # 1. Set Theory Internal Prerequisites
+  # ----------------------------------------------------------------------------
+  - prereq: "Set"
+    dependent: "Union"
+  - prereq: "Set"
+    dependent: "Intersection"
+  - prereq: "Union"
+    dependent: "Difference"
+
+  # ----------------------------------------------------------------------------
+  # 2. Bridge: Set Theory -> Combinatorics
+  # Gating Combinatorics entry points behind Set Theory ensures that questions
+  # are not interleaved between the two topics.
+  # ----------------------------------------------------------------------------
+  - prereq: "Difference"
+    dependent: "CountingPrinciple"
+  - prereq: "Difference"
+    dependent: "FactorialEvaluation"
+
+  # ----------------------------------------------------------------------------
+  # 3. Combinatorics Internal Prerequisites
+  # ----------------------------------------------------------------------------
+  - prereq: "FactorialEvaluation"
+    dependent: "FactorialSimplification"
+  - prereq: "CountingPrinciple"
+    dependent: "Permutation"
+  - prereq: "FactorialSimplification"
+    dependent: "Permutation"
+  - prereq: "CountingPrinciple"
+    dependent: "Combination"
+  - prereq: "Permutation"
+    dependent: "Combination"
+  - prereq: "CountingPrinciple"
+    dependent: "PermutationWithRepetition"
+  - prereq: "Permutation"
+    dependent: "PermutationOfIdenticalObjects"
+  - prereq: "FactorialSimplification"
+    dependent: "PermutationOfIdenticalObjects"
+  - prereq: "Permutation"
+    dependent: "CircularPermutation"
+
+  # ----------------------------------------------------------------------------
+  # 4. Bridge: Set Theory & Combinatorics -> Probability Theory
+  # Probability Theory requires both set operations and combinatorics.
+  # ----------------------------------------------------------------------------
+  - prereq: "Union"
+    dependent: "InclusionExclusion"
+  - prereq: "Intersection"
+    dependent: "ConditionalProbability"
+  - prereq: "Combination"
+    dependent: "InclusionExclusion"
+
+# ==============================================================================
+# IMPLEMENTER-CONFIGURED TEMPLATE ORDER
+# ==============================================================================
+template_order:
+  # Stage 1: Set Theory
+  - "set_union_01"
+  - "set_intersection_01"
+  - "set_difference_01"
+
+  # Stage 2: Combinatorics
+  - "comb_rule_of_sum_01"
+  - "comb_counting_01"
+  - "comb_factorial_eval_01"
+  - "comb_factorial_simplify_01"
+  - "comb_arrange_all_01"
+  - "comb_permutation_01"
+  - "comb_combination_01"
+  - "comb_perm_repetition_01"
+  - "comb_perm_identical_01"
+  - "comb_circular_01"
+
+  # Stage 3: Probability Theory
+  - "prob_inc_exc_01"
+  - "prob_cond_01"
+
+# ==============================================================================
+# IMPLEMENTER-CONFIGURED CONCEPT ORDER
+# ==============================================================================
+concept_order:
+  - "Union"
+  - "Intersection"
+  - "Difference"
+  - "CountingPrinciple"
+  - "FactorialEvaluation"
+  - "FactorialSimplification"
+  - "Permutation"
+  - "Combination"
+  - "PermutationWithRepetition"
+  - "PermutationOfIdenticalObjects"
+  - "CircularPermutation"
+  - "InclusionExclusion"
+  - "ConditionalProbability"

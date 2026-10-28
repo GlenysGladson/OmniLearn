@@ -1,0 +1,40 @@
+theory_name: "PermutationTogether"
+
+concepts:
+  - id: "PermutationItemsTogether"
+    category: "OPERATION"
+    assessable: true
+
+dependencies: []
+
+templates:
+  # ==================================================
+  # PERMUTATION WITH ITEMS TOGETHER
+  # ==================================================
+
+  - id: "comb_items_together_01"
+    targets: ["PermutationItemsTogether"]
+
+    question_text: "{n} friends are to sit in a row for a photograph. {k} particular friends insist on sitting next to each other. In how many different ways can all {n} friends be arranged?"
+
+    variables:
+      - name: "n"
+        sort: "Int"
+      - name: "k"
+        sort: "Int"
+
+    constraints:
+      - "(>= n 6)"
+      - "(<= n 7)"
+      - "(>= k 2)"
+      - "(<= k 3)"
+
+    # (n - k + 1)! * k!
+    correct_answer_expr: "(ite (= n 6) (ite (= k 2) 240 144) (ite (= k 2) 1440 720))"
+    answer_type: "Int"
+
+    misconceptions:
+      # Gap: does not see that the condition changes the count (prerequisite: Permutation)
+      - name: "IgnoredTheTogetherCondition"
+        expr: "(ite (= n 6) 720 5040)"
+        description: "Counted all n! arrangements and ignored the restriction that the k friends must sit together."

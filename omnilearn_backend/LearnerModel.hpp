@@ -1,63 +1,110 @@
 #ifndef LEARNER_MODEL_HPP
 #define LEARNER_MODEL_HPP
 
+#include <deque>
 #include <iostream>
-#include <string>
-#include <vector>
 #include <map>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
 #include "Theory.hpp"
+
+// Certification and mastery rules. Defaults were chosen with a small
+// simulation (see the project notes); they are not fitted to real students.
+struct LearnerConfig {
+    double masteryThreshold = 0.95;   // P(known) needed for a concept
+    int minAttempts = 3;              // minimum answers per concept
+    int accuracyWindow = 10;          // look at the last N answers ...
+    double minRecentAccuracy = 0.80;  // ... and require this share correct
+    int errorResolveStreak = 2;       // correct answers in a row that resolve an error
+};
+
+// Everything the model needs to know about one answered question.
+struct Observation {
+    std::string templateId;
+    std::string questionText;
+    std::vector<std::string> targets;
+    std::string answerType;     // "Int", "Real", "Bool", "Set"
+    double difficulty = 0.5;
+    bool correct = false;
+    std::string errorName;      // misconception name, empty if none matched
+    bool isRecheck = false;     // final re-check question
+};
+
+struct ConceptState {
+    BktParams bkt;
+    double pKnown = 0.10;
+    int attempts = 0;
+    int correct = 0;
+    bool recheckPassed = false;
+    std::deque<int> recent;     // last answers, 1 = correct, newest at the back
+};
+
+struct ErrorState {
+    int occurrences = 0;
+    int streakSinceLast = 0;    // correct answers in this concept since the last occurrence
+    bool active = false;        // unresolved
+};
 
 class LearnerModel {
 private:
-    std::map<std::string, double> mastery;
-    std::map<std::string, int> coverage;
-    std::map<std::string, int> errorPatterns;
+    LearnerConfig cfg;
+    std::map<std::string, ConceptState> concepts;
+    // key = (concept, misconception name)
+    std::map<std::pair<std::string, std::string>, ErrorState> errors;
+    std::map<std::string, int> templateUses;
+    std::set<std::string> askedQuestions;
+    int questionsAnswered = 0;
 
-    // Hyperparameters for the learning model
-    double alpha = 0.2;
-    double theta = 0.8;
-    int k = 3;
+    double recentAccuracy(const ConceptState& s) const;
 
 public:
     LearnerModel() = default;
 
-    void initialize(const FormalTheory& theory);
-    void update(const std::vector<std::string>& assessedConcepts, bool isCorrect, const std::string& detectedError = "");
+    const LearnerConfig& config() const { return cfg; }
+    void setConfig(const LearnerConfig& c) { cfg = c; }
 
-    // Both now take the theory so they can filter out non-assessable
-    // concepts (Properties/Rules) that no template currently targets.
-    std::vector<std::string> getWeakConcepts(const FormalTheory& theory) const;
-    std::vector<std::string> getUncoveredConcepts(const FormalTheory& theory) const;
+    // Fresh state for every concept in the theory (BKT parameters are taken
+    // from the theory).
+    void initialize(const FormalTheory& theory);
+
+    // Applies one answer: BKT update for every target concept, error-pattern
+    // bookkeeping, and history (asked texts, template use counts).
+    void update(const Observation& obs);
+
+    // --- queries ---
+    double pKnown(const std::string& concept) const;
+    int attempts(const std::string& concept) const;
+    int correctCount(const std::string& concept) const;
+    bool isMastered(const std::string& concept) const;      // P(known), attempts, recent accuracy
+    bool hasActiveError(const std::string& concept) const;
+    std::vector<std::string> activeErrors(const std::string& concept) const;
+    bool needsWork(const std::string& concept) const;       // not mastered, or an unresolved error
+    bool needsRecheck(const std::string& concept) const;    // mastered, clean, final check pending
+    bool prerequisitesMet(const std::string& concept, const FormalTheory& theory) const;
+
+    std::vector<std::string> getWeakConcepts(const FormalTheory& theory) const;      // asked, still needs work
+    std::vector<std::string> getUncoveredConcepts(const FormalTheory& theory) const; // never asked
 
     bool isCertified(const FormalTheory& theory) const;
+    std::vector<std::string> certificationBlockers(const FormalTheory& theory) const;
+
+    const std::set<std::string>& asked() const { return askedQuestions; }
+    int templateUseCount(const std::string& templateId) const;
+    int totalAnswered() const { return questionsAnswered; }
+
+    // Compatibility with the earlier interface.
+    double getMastery(const std::string& concept) const { return pKnown(concept); }
+    int getCoverage(const std::string& concept) const { return attempts(concept); }
+
+    // State file (YAML). saveState writes to a temporary file and renames it.
+    bool saveState(const std::string& path) const;
+    // Overlays a saved state on a model already initialize()d from `theory`.
+    // Returns false (and leaves the model untouched) if the file is missing or unreadable.
+    bool loadState(const std::string& path, const FormalTheory& theory);
+
     void printReport(const FormalTheory& theory) const;
-
-    double getMastery(const std::string& concept) const {
-        auto it = mastery.find(concept);
-        return (it != mastery.end()) ? it->second : 0.0;
-    }
-
-    int getCoverage(const std::string& concept) const {
-        auto it = coverage.find(concept);
-        return (it != coverage.end()) ? it->second : 0;
-    }
-
-    void printFullState() const {
-        std::cout << "\n--- Final Mastery Metrics ---\n";
-        for (const auto& pair : mastery) {
-            std::cout << pair.first << ": " << pair.second << "\n";
-        }
-        std::cout << "\n--- Final Coverage Metrics ---\n";
-        for (const auto& pair : coverage) {
-            std::cout << pair.first << ": " << pair.second << "\n";
-        }
-        if (!errorPatterns.empty()) {
-            std::cout << "\n--- Persistent Error Patterns ---\n";
-            for (const auto& err : errorPatterns) {
-                std::cout << err.first << " : " << err.second << " occurrences\n";
-            }
-        }
-    }
 };
 
 #endif // LEARNER_MODEL_HPP
