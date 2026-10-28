@@ -46,6 +46,14 @@ find_package(yaml-cpp REQUIRED)
 
 find_package(Threads REQUIRED)
 
+find_package(CURL QUIET)
+set(OMNI_CURL_LIBS "")
+if(CURL_FOUND)
+    add_definitions(-DHAVE_LIBCURL)
+    include_directories(${CURL_INCLUDE_DIRS})
+    set(OMNI_CURL_LIBS ${CURL_LIBRARIES})
+endif()
+
 set(SOURCES
     ${CMAKE_SOURCE_DIR}/LearnerModel.cpp
     ${CMAKE_SOURCE_DIR}/TemplateEngine.cpp
@@ -54,6 +62,7 @@ set(SOURCES
     ${CMAKE_SOURCE_DIR}/GenericExprEngine.cpp
     ${CMAKE_SOURCE_DIR}/TemplateValidator.cpp
     ${CMAKE_SOURCE_DIR}/InstanceValidator.cpp
+    ${CMAKE_SOURCE_DIR}/AIDiagnoser.cpp
 )
 
 set(OMNI_TARGETS omnilearn_backend omnilearn_validate omnilearn_tests)
@@ -63,7 +72,7 @@ add_executable(omnilearn_validate ${SOURCES} ${CMAKE_SOURCE_DIR}/validate_main.c
 add_executable(omnilearn_tests ${SOURCES} ${CMAKE_SOURCE_DIR}/tests/test_validator.cpp)
 
 foreach(t ${OMNI_TARGETS})
-    target_link_libraries(${t} PRIVATE ${OMNI_Z3_LIBS} yaml-cpp Threads::Threads)
+    target_link_libraries(${t} PRIVATE ${OMNI_Z3_LIBS} yaml-cpp Threads::Threads ${OMNI_CURL_LIBS})
     # GCC < 9 ships std::filesystem in a separate library.
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.0)
         target_link_libraries(${t} PRIVATE stdc++fs)

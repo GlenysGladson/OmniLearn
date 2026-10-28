@@ -20,6 +20,7 @@
 #include "TemplateValidator.hpp"
 #include "Theory.hpp"
 #include "YamlParser.hpp"
+#include "AIDiagnoser.hpp"
 
 namespace fs = std::filesystem;
 
@@ -48,12 +49,17 @@ const int kLoadSamples = 3;
 // After all files are merged, the dependency graph is checked: a cycle is
 // fatal, an edge naming an unknown concept is a warning.
 FormalTheory loadAllTheories(const std::string& theoriesDir) {
-    if (!fs::exists(theoriesDir) || !fs::is_directory(theoriesDir)) {
-        throw std::runtime_error("Theories directory not found: " + theoriesDir);
+    std::string resolvedDir = theoriesDir;
+    if (!fs::exists(resolvedDir) || !fs::is_directory(resolvedDir)) {
+        if (fs::exists("../" + theoriesDir) && fs::is_directory("../" + theoriesDir)) {
+            resolvedDir = "../" + theoriesDir;
+        } else {
+            throw std::runtime_error("Theories directory not found: " + theoriesDir);
+        }
     }
 
     std::vector<fs::path> yamlFiles;
-    for (const auto& entry : fs::directory_iterator(theoriesDir)) {
+    for (const auto& entry : fs::directory_iterator(resolvedDir)) {
         if (!entry.is_regular_file()) continue;
         std::string ext = entry.path().extension().string();
         if (ext == ".yaml" || ext == ".yml") yamlFiles.push_back(entry.path());
@@ -479,11 +485,27 @@ int main(int argc, char* argv[]) {
 
             std::string errorName, errorDescription;
             if (!isCorrect) {
+                // 1. Check deterministic SMT misconceptions
                 for (const auto& mc : q.misconceptions) {
                     if (concreteValuesEqual(studentValue, mc.value)) {
                         errorName = mc.name;
                         errorDescription = mc.description;
                         break;
+                    }
+                }
+
+                // 2. Fallback to AI diagnosis if not matched and AI is configured
+                if (errorDescription.empty() && AIDiagnoser::isConfigured()) {
+                    auto aiDiag = AIDiagnoser::diagnose(
+                        q.questionText,
+                        studentValue.toDisplayString(),
+                        q.correctValue.toDisplayString(),
+                        q.answerType,
+                        q.targetConcepts
+                    );
+                    if (aiDiag.success) {
+                        errorName = aiDiag.errorName;
+                        errorDescription = aiDiag.explanation;
                     }
                 }
             }
