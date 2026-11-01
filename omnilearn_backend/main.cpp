@@ -32,7 +32,7 @@ namespace {
 
 // Number of generated instances used to check, at load time, that each
 // misconception really gives a different value than the correct answer.
-const int kLoadSamples = 3;
+    const int kLoadSamples = 3;
 
 } // namespace
 
@@ -178,229 +178,260 @@ FormalTheory loadAllTheories(const std::string& theoriesDir) {
 
 namespace {
 
-struct InputClosed {};  // stdin reached end of file
-struct QuitRequested {}; // student typed quit / exit
+    struct InputClosed {};  // stdin reached end of file
+    struct QuitRequested {}; // student typed quit / exit
 
-std::string toLower(const std::string& s) {
-    std::string r = s;
-    std::transform(r.begin(), r.end(), r.begin(), [](unsigned char c) { return std::tolower(c); });
-    return r;
-}
-
-std::string trim(const std::string& s) {
-    size_t b = 0, e = s.size();
-    while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
-    while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
-    return s.substr(b, e - b);
-}
-
-bool readLine(std::string& out) {
-    if (!std::getline(std::cin, out)) return false;
-    if (!out.empty() && out.back() == '\r') out.pop_back(); // Windows line endings
-    return true;
-}
-
-bool parseWholeNumber(const std::string& s, long long& out) {
-    if (s.empty()) return false;
-    size_t i = 0;
-    if (s[0] == '+' || s[0] == '-') i = 1;
-    if (i >= s.size() || s.size() - i > 18) return false;
-    for (size_t k = i; k < s.size(); ++k) {
-        if (!std::isdigit(static_cast<unsigned char>(s[k]))) return false;
+    std::string toLower(const std::string& s) {
+        std::string r = s;
+        std::transform(r.begin(), r.end(), r.begin(), [](unsigned char c) { return std::tolower(c); });
+        return r;
     }
-    try { out = std::stoll(s); } catch (...) { return false; }
-    return true;
-}
+
+    std::string trim(const std::string& s) {
+        size_t b = 0, e = s.size();
+        while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
+        while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
+        return s.substr(b, e - b);
+    }
+
+    bool readLine(std::string& out) {
+        if (!std::getline(std::cin, out)) return false;
+        if (!out.empty() && out.back() == '\r') out.pop_back(); // Windows line endings
+        return true;
+    }
+
+    bool parseWholeNumber(const std::string& s, long long& out) {
+        if (s.empty()) return false;
+        size_t i = 0;
+        if (s[0] == '+' || s[0] == '-') i = 1;
+        if (i >= s.size() || s.size() - i > 18) return false;
+        for (size_t k = i; k < s.size(); ++k) {
+            if (!std::isdigit(static_cast<unsigned char>(s[k]))) return false;
+        }
+        try { out = std::stoll(s); } catch (...) { return false; }
+        return true;
+    }
 
 // Strict parse of a typed answer. Returns false and sets `err` on bad input,
 // so a typo is never silently turned into a (possibly correct) answer.
-bool parseAnswer(const std::string& raw, const std::string& answerType, ConcreteValue& out, std::string& err) {
-    std::string s = trim(raw);
-    out = ConcreteValue();
-    out.sort = answerType;
+    bool parseAnswer(const std::string& raw, const std::string& answerType, ConcreteValue& out, std::string& err) {
+        std::string s = trim(raw);
+        out = ConcreteValue();
+        out.sort = answerType;
 
-    if (answerType == "Bool") {
-        std::string l = toLower(s);
-        if (l == "true" || l == "t" || l == "yes" || l == "y" || l == "1") { out.boolValue = true; return true; }
-        if (l == "false" || l == "f" || l == "no" || l == "n" || l == "0") { out.boolValue = false; return true; }
-        err = "Please answer true or false.";
-        return false;
-    }
-    if (answerType == "Real") {
-        if (s.empty()) { err = "Please enter a number."; return false; }
-        try {
-            size_t pos = 0;
-            double v = std::stod(s, &pos);
-            if (pos != s.size() || !std::isfinite(v)) { err = "Please enter a plain number such as 0.25."; return false; }
-            out.realValue = v;
-            return true;
-        } catch (...) {
-            err = "Please enter a plain number such as 0.25.";
+        if (answerType == "Bool") {
+            std::string l = toLower(s);
+            if (l == "true" || l == "t" || l == "yes" || l == "y" || l == "1") { out.boolValue = true; return true; }
+            if (l == "false" || l == "f" || l == "no" || l == "n" || l == "0") { out.boolValue = false; return true; }
+            err = "Please answer true or false.";
             return false;
         }
-    }
-    if (answerType == "Set") {
-        std::string l = toLower(s);
-        if (l == "{}" || l == "empty" || l == "none" || l == "{ }") return true; // empty set
-        std::string cleaned;
-        for (char c : s) {
-            if (c == '{' || c == '}' || c == '[' || c == ']' || c == '(' || c == ')') continue;
-            cleaned += (c == ',') ? ' ' : c;
-        }
-        std::stringstream ss(cleaned);
-        std::string tok;
-        std::set<int> elems;
-        bool any = false;
-        while (ss >> tok) {
-            long long v = 0;
-            if (!parseWholeNumber(tok, v) || v < 1 || v > 64) {
-                err = "'" + tok + "' is not a valid element. Use whole numbers like 1,2,3 (or {} for the empty set).";
+        if (answerType == "Real") {
+            if (s.empty()) { err = "Please enter a number."; return false; }
+            try {
+                size_t pos = 0;
+                double v = std::stod(s, &pos);
+                if (pos != s.size() || !std::isfinite(v)) { err = "Please enter a plain number such as 0.25."; return false; }
+                out.realValue = v;
+                return true;
+            } catch (...) {
+                err = "Please enter a plain number such as 0.25.";
                 return false;
             }
-            elems.insert(static_cast<int>(v));
-            any = true;
         }
-        if (!any) { err = "Please list the elements, e.g. 1,2,3 (or {} for the empty set)."; return false; }
-        out.setValue.assign(elems.begin(), elems.end());
+        if (answerType == "Set") {
+            std::string l = toLower(s);
+            if (l == "{}" || l == "empty" || l == "none" || l == "{ }") return true; // empty set
+            std::string cleaned;
+            for (char c : s) {
+                if (c == '{' || c == '}' || c == '[' || c == ']' || c == '(' || c == ')') continue;
+                cleaned += (c == ',') ? ' ' : c;
+            }
+            std::stringstream ss(cleaned);
+            std::string tok;
+            std::set<int> elems;
+            bool any = false;
+            while (ss >> tok) {
+                long long v = 0;
+                if (!parseWholeNumber(tok, v) || v < 1 || v > 64) {
+                    err = "'" + tok + "' is not a valid element. Use whole numbers like 1,2,3 (or {} for the empty set).";
+                    return false;
+                }
+                elems.insert(static_cast<int>(v));
+                any = true;
+            }
+            if (!any) { err = "Please list the elements, e.g. 1,2,3 (or {} for the empty set)."; return false; }
+            out.setValue.assign(elems.begin(), elems.end());
+            return true;
+        }
+        // "Int" and any other declared type are treated as whole numbers.
+        long long v = 0;
+        if (!parseWholeNumber(s, v)) { err = "Please enter a whole number."; return false; }
+        out.sort = "Int";
+        out.intValue = v;
         return true;
     }
-    // "Int" and any other declared type are treated as whole numbers.
-    long long v = 0;
-    if (!parseWholeNumber(s, v)) { err = "Please enter a whole number."; return false; }
-    out.sort = "Int";
-    out.intValue = v;
-    return true;
-}
 
 // Asks until the student gives a valid answer. Throws InputClosed on end of
 // input and QuitRequested on "quit"/"exit".
-ConcreteValue promptForAnswer(const std::string& answerType) {
-    for (;;) {
-        if (answerType == "Set") std::cout << "Enter answer (elements, e.g. 1,2,3 or {} for empty): ";
-        else if (answerType == "Bool") std::cout << "Enter answer (true/false): ";
-        else if (answerType == "Real") std::cout << "Enter answer (a number): ";
-        else std::cout << "Enter answer: ";
-        std::cout.flush();
+    ConcreteValue promptForAnswer(const std::string& answerType) {
+        for (;;) {
+            if (answerType == "Set") std::cout << "Enter answer (elements, e.g. 1,2,3 or {} for empty): ";
+            else if (answerType == "Bool") std::cout << "Enter answer (true/false): ";
+            else if (answerType == "Real") std::cout << "Enter answer (a number): ";
+            else std::cout << "Enter answer: ";
+            std::cout.flush();
 
-        std::string line;
-        if (!readLine(line)) throw InputClosed();
-        std::string l = toLower(trim(line));
-        if (l == "quit" || l == "exit") throw QuitRequested();
+            std::string line;
+            if (!readLine(line)) throw InputClosed();
+            std::string l = toLower(trim(line));
+            if (l == "quit" || l == "exit") throw QuitRequested();
 
-        ConcreteValue v;
-        std::string err;
-        if (parseAnswer(line, answerType, v, err)) return v;
-        std::cout << "  Invalid input: " << err << "\n";
+            ConcreteValue v;
+            std::string err;
+            if (parseAnswer(line, answerType, v, err)) return v;
+            std::cout << "  Invalid input: " << err << "\n";
+        }
     }
-}
+
+// TEST ONLY: the answer a "perfect" (or deliberately wrong) student would give.
+// Wrong answers reuse the first template misconception when there is one,
+// otherwise the correct value is nudged so it is guaranteed to differ.
+    ConcreteValue autopilotAnswer(const GeneratedQuestion& q, bool wrong) {
+        if (!wrong) return q.correctValue;
+        if (!q.misconceptions.empty()) return q.misconceptions[0].value;
+        ConcreteValue v = q.correctValue;
+        if (v.sort == "Int") v.intValue += 1;
+        else if (v.sort == "Real") v.realValue += 1.0;
+        else if (v.sort == "Bool") v.boolValue = !v.boolValue;
+        else if (v.sort == "Set") {
+            auto it = std::find(v.setValue.begin(), v.setValue.end(), 1);
+            if (it != v.setValue.end()) v.setValue.erase(it);
+            else { v.setValue.push_back(1); std::sort(v.setValue.begin(), v.setValue.end()); }
+        }
+        return v;
+    }
 
 // ---------------------------------------------------------------------------
 // Logging
 // ---------------------------------------------------------------------------
 
-std::string csvEscape(const std::string& s) {
-    bool needs = s.find_first_of(",\"\n\r") != std::string::npos;
-    if (!needs) return s;
-    std::string r = "\"";
-    for (char c : s) {
-        if (c == '"') r += "\"\"";
-        else if (c == '\n' || c == '\r') r += ' ';
-        else r += c;
+    std::string csvEscape(const std::string& s) {
+        bool needs = s.find_first_of(",\"\n\r") != std::string::npos;
+        if (!needs) return s;
+        std::string r = "\"";
+        for (char c : s) {
+            if (c == '"') r += "\"\"";
+            else if (c == '\n' || c == '\r') r += ' ';
+            else r += c;
+        }
+        return r + "\"";
     }
-    return r + "\"";
-}
 
-std::string joinStrings(const std::vector<std::string>& v, const std::string& sep) {
-    std::string r;
-    for (size_t i = 0; i < v.size(); ++i) r += (i ? sep : "") + v[i];
-    return r;
-}
-
-std::string nowString() {
-    std::time_t t = std::time(nullptr);
-    char buf[32];
-    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", std::localtime(&t));
-    return buf;
-}
-
-void appendLog(const std::string& path, int questionNo, const Selection& sel, bool correct,
-               const std::string& errorName, const std::string& studentAnswer,
-               const std::string& expected, double pBefore, double pAfter) {
-    bool writeHeader = !fs::exists(path) || fs::file_size(path) == 0;
-    std::ofstream f(path, std::ios::app);
-    if (!f) {
-        std::cerr << "[WARN] Could not write response log '" << path << "'.\n";
-        return;
+    std::string joinStrings(const std::vector<std::string>& v, const std::string& sep) {
+        std::string r;
+        for (size_t i = 0; i < v.size(); ++i) r += (i ? sep : "") + v[i];
+        return r;
     }
-    if (writeHeader) {
-        f << "timestamp,question_no,template_id,focus_concept,target_concepts,is_recheck,difficulty,"
-             "correct,error_name,student_answer,expected_answer,p_known_before,p_known_after\n";
+
+    std::string nowString() {
+        std::time_t t = std::time(nullptr);
+        char buf[32];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", std::localtime(&t));
+        return buf;
     }
-    f << nowString() << ',' << questionNo << ',' << csvEscape(sel.question.templateId) << ','
-      << csvEscape(sel.focusConcept) << ',' << csvEscape(joinStrings(sel.question.targetConcepts, ";")) << ','
-      << (sel.isRecheck ? 1 : 0) << ',' << sel.question.difficulty << ',' << (correct ? 1 : 0) << ','
-      << csvEscape(errorName) << ',' << csvEscape(studentAnswer) << ',' << csvEscape(expected) << ','
-      << std::fixed << std::setprecision(4) << pBefore << ',' << pAfter << '\n';
-}
+
+    void appendLog(const std::string& path, int questionNo, const Selection& sel, bool correct,
+                   const std::string& errorName, const std::string& studentAnswer,
+                   const std::string& expected, double pBefore, double pAfter) {
+        bool writeHeader = !fs::exists(path) || fs::file_size(path) == 0;
+        std::ofstream f(path, std::ios::app);
+        if (!f) {
+            std::cerr << "[WARN] Could not write response log '" << path << "'.\n";
+            return;
+        }
+        if (writeHeader) {
+            f << "timestamp,question_no,template_id,focus_concept,target_concepts,is_recheck,difficulty,"
+                 "correct,error_name,student_answer,expected_answer,p_known_before,p_known_after\n";
+        }
+        f << nowString() << ',' << questionNo << ',' << csvEscape(sel.question.templateId) << ','
+          << csvEscape(sel.focusConcept) << ',' << csvEscape(joinStrings(sel.question.targetConcepts, ";")) << ','
+          << (sel.isRecheck ? 1 : 0) << ',' << sel.question.difficulty << ',' << (correct ? 1 : 0) << ','
+          << csvEscape(errorName) << ',' << csvEscape(studentAnswer) << ',' << csvEscape(expected) << ','
+          << std::fixed << std::setprecision(4) << pBefore << ',' << pAfter << '\n';
+    }
 
 // ---------------------------------------------------------------------------
 // Command line
 // ---------------------------------------------------------------------------
 
-struct Options {
-    std::string theoriesDir = "theories/";
-    std::string statePath = "learner_state.yaml";
-    std::string logPath = "responses_log.csv";
-    bool fresh = false;
-    bool verbose = false;
-    int maxQuestions = 0; // 0 = automatic
-    bool help = false;
-};
+    struct Options {
+        std::string theoriesDir = "theories/";
+        std::string statePath = "learner_state.yaml";
+        std::string logPath = "responses_log.csv";
+        bool fresh = false;
+        bool verbose = false;
+        int maxQuestions = 0; // 0 = automatic
+        bool help = false;
+        bool autopilot = false;        // TEST ONLY: answer from the engine's own correct answer
+        int autopilotWrongOneIn = 0;   // TEST ONLY: if > 0, each question is answered wrongly with probability 1/N
+    };
 
-void printUsage(const char* prog) {
-    std::cout << "Usage: " << prog << " [theories_dir] [options]\n"
-              << "  --state FILE         learner state file (default learner_state.yaml)\n"
-              << "  --log FILE           response log, CSV (default responses_log.csv)\n"
-              << "  --fresh              ignore and overwrite any saved state\n"
-              << "  --max-questions N    stop after N questions in this run (default: 15 per concept, at least 40)\n"
-              << "  --verbose            show why each question was chosen and P(known)\n"
-              << "  --help               show this text\n"
-              << "Type 'quit' at an answer prompt to save and exit.\n";
-}
-
-bool parseArgs(int argc, char* argv[], Options& o, std::string& err) {
-    bool haveDir = false;
-    for (int i = 1; i < argc; ++i) {
-        std::string a = argv[i];
-        auto needValue = [&](std::string& dst) {
-            if (i + 1 >= argc) { err = "Option " + a + " needs a value."; return false; }
-            dst = argv[++i];
-            return true;
-        };
-        if (a == "--help" || a == "-h") o.help = true;
-        else if (a == "--fresh") o.fresh = true;
-        else if (a == "--verbose") o.verbose = true;
-        else if (a == "--state") { if (!needValue(o.statePath)) return false; }
-        else if (a == "--log") { if (!needValue(o.logPath)) return false; }
-        else if (a == "--max-questions") {
-            std::string v;
-            if (!needValue(v)) return false;
-            long long n = 0;
-            if (!parseWholeNumber(v, n) || n < 1) { err = "--max-questions needs a positive whole number."; return false; }
-            o.maxQuestions = static_cast<int>(n);
-        } else if (!a.empty() && a[0] == '-') {
-            err = "Unknown option: " + a;
-            return false;
-        } else if (!haveDir) {
-            o.theoriesDir = a;
-            haveDir = true;
-        } else {
-            err = "Unexpected argument: " + a;
-            return false;
-        }
+    void printUsage(const char* prog) {
+        std::cout << "Usage: " << prog << " [theories_dir] [options]\n"
+                  << "  --state FILE         learner state file (default learner_state.yaml)\n"
+                  << "  --log FILE           response log, CSV (default responses_log.csv)\n"
+                  << "  --fresh              ignore and overwrite any saved state\n"
+                  << "  --max-questions N    stop after N questions in this run (default: 15 per concept, at least 40)\n"
+                  << "  --verbose            show why each question was chosen and P(known)\n"
+                  << "  --autopilot          TEST ONLY: answer every question correctly\n"
+                  << "  --autopilot-wrong-one-in N   TEST ONLY: autopilot, but each question is wrong with probability 1/N\n"
+                  << "  --help               show this text\n"
+                  << "Type 'quit' at an answer prompt to save and exit.\n";
     }
-    return true;
-}
+
+    bool parseArgs(int argc, char* argv[], Options& o, std::string& err) {
+        bool haveDir = false;
+        for (int i = 1; i < argc; ++i) {
+            std::string a = argv[i];
+            auto needValue = [&](std::string& dst) {
+                if (i + 1 >= argc) { err = "Option " + a + " needs a value."; return false; }
+                dst = argv[++i];
+                return true;
+            };
+            if (a == "--help" || a == "-h") o.help = true;
+            else if (a == "--fresh") o.fresh = true;
+            else if (a == "--verbose") o.verbose = true;
+            else if (a == "--autopilot") o.autopilot = true;
+            else if (a == "--autopilot-wrong-one-in") {
+                std::string v;
+                if (!needValue(v)) return false;
+                long long n = 0;
+                if (!parseWholeNumber(v, n) || n < 1) { err = "--autopilot-wrong-one-in needs a positive whole number."; return false; }
+                o.autopilot = true;
+                o.autopilotWrongOneIn = static_cast<int>(n);
+            }
+            else if (a == "--state") { if (!needValue(o.statePath)) return false; }
+            else if (a == "--log") { if (!needValue(o.logPath)) return false; }
+            else if (a == "--max-questions") {
+                std::string v;
+                if (!needValue(v)) return false;
+                long long n = 0;
+                if (!parseWholeNumber(v, n) || n < 1) { err = "--max-questions needs a positive whole number."; return false; }
+                o.maxQuestions = static_cast<int>(n);
+            } else if (!a.empty() && a[0] == '-') {
+                err = "Unknown option: " + a;
+                return false;
+            } else if (!haveDir) {
+                o.theoriesDir = a;
+                haveDir = true;
+            } else {
+                err = "Unexpected argument: " + a;
+                return false;
+            }
+        }
+        return true;
+    }
 
 } // namespace
 
@@ -480,7 +511,15 @@ int main(int argc, char* argv[]) {
             if (q.isRepeat) std::cout << "[note] No unused variant exists for this template; this question was asked before.\n";
             std::cout << q.questionText << "\n";
 
-            ConcreteValue studentValue = promptForAnswer(q.answerType);
+            ConcreteValue studentValue;
+            if (opt.autopilot) {
+                bool wrong = opt.autopilotWrongOneIn > 0 && !sel.isRecheck &&
+                             (std::rand() % opt.autopilotWrongOneIn == 0);
+                studentValue = autopilotAnswer(q, wrong);
+                std::cout << "Enter answer: " << studentValue.toDisplayString() << "\n";
+            } else {
+                studentValue = promptForAnswer(q.answerType);
+            }
             bool isCorrect = concreteValuesEqual(studentValue, q.correctValue);
 
             std::string errorName, errorDescription;
@@ -497,11 +536,11 @@ int main(int argc, char* argv[]) {
                 // 2. Fallback to AI diagnosis if not matched and AI is configured
                 if (errorDescription.empty() && AIDiagnoser::isConfigured()) {
                     auto aiDiag = AIDiagnoser::diagnose(
-                        q.questionText,
-                        studentValue.toDisplayString(),
-                        q.correctValue.toDisplayString(),
-                        q.answerType,
-                        q.targetConcepts
+                            q.questionText,
+                            studentValue.toDisplayString(),
+                            q.correctValue.toDisplayString(),
+                            q.answerType,
+                            q.targetConcepts
                     );
                     if (aiDiag.success) {
                         errorName = aiDiag.errorName;
